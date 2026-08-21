@@ -9,6 +9,6 @@ All notable changes will be documented here.
 - Server-owned web search and Markdown-preserving page fetch tools.
 - Persistent, request-linked web-tool history.
 - Live JSON configuration with authenticated administration.
-- Per-query CPU and memory sampling.
+- Per-query CPU, Apple Silicon GPU, and memory sampling with persisted benchmark averages.
+- Authenticated cancellation controls for active generations and server-owned tool runs.
 - Private-network fetch protection enabled by default.
-

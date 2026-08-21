@@ -114,9 +114,13 @@ async function refresh() {
           ${cell("prompt", r.promptTokens ? nf.format(r.promptTokens) : "–", "num")}
           ${cell("tok/s", r.tokensPerSecond.toFixed(1), "num")}
           ${cell("cpu avg", r.averageCPUPercent != null ? r.averageCPUPercent.toFixed(1) + "%" : "–", "num")}
+          ${cell("gpu avg", r.averageGPUPercent != null ? r.averageGPUPercent.toFixed(1) + "%" : "–", "num")}
           ${cell("ram avg", bytes(r.averageMemoryUsedBytes), "num")}
           ${cell("time", r.elapsedSeconds.toFixed(1) + "s", "num")}
           ${cell("state", escapeHTML(r.state), `state ${r.state}`)}
+          ${cell("action", r.endedAt == null
+            ? `<button class="stop-button" type="button" data-request-id="${r.id}">stop</button>`
+            : "–")}
         </tr>`
         )
         .join("") ||
@@ -205,6 +209,7 @@ async function refresh() {
           )}
           ${cell("total", b.averageTotalDurationSeconds.toFixed(2) + "s", "num")}
           ${cell("cpu avg", b.averageCPUPercent != null ? b.averageCPUPercent.toFixed(1) + "%" : "–", "num")}
+          ${cell("gpu avg", b.averageGPUPercent != null ? b.averageGPUPercent.toFixed(1) + "%" : "–", "num")}
           ${cell("ram avg", bytes(b.averageMemoryUsedBytes), "num")}
         </tr>`
         )
@@ -247,6 +252,27 @@ async function clearStats() {
     window.alert(`Unable to clear stats: ${error.message}`);
   } finally {
     button.disabled = false;
+  }
+}
+
+async function cancelRequest(requestID, button) {
+  if (!adminAuthenticated) {
+    if (adminPasswordConfigured) $("adminLoginDialog").showModal();
+    return;
+  }
+  button.disabled = true;
+  button.textContent = "stopping…";
+  try {
+    const response = await fetch(`/requests/${requestID}/cancel`, {
+      method: "POST",
+      cache: "no-store",
+    });
+    if (!response.ok && response.status !== 409) throw new Error(`HTTP ${response.status}`);
+    await refresh();
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = "stop";
+    window.alert(`Unable to stop request #${requestID}: ${error.message}`);
   }
 }
 
@@ -373,6 +399,10 @@ $("adminLogout").addEventListener("click", async () => {
 });
 $("settingsForm").addEventListener("submit", saveConfiguration);
 $("clearStats").addEventListener("click", clearStats);
+$("requestRows").addEventListener("click", (event) => {
+  const button = event.target.closest(".stop-button");
+  if (button) cancelRequest(Number(button.dataset.requestId), button);
+});
 loadAdminSession().catch((error) => console.error("Unable to load admin session:", error));
 refresh();
 setInterval(refresh, 1000);

@@ -11,7 +11,7 @@ It streams Ollama responses to clients before asynchronously accounting for them
 - TTFT, prompt-evaluation tok/s, generation tok/s, load time, and total latency.
 - Per-model historical summaries and repeatable labeled benchmark runs.
 - Temperature, context length, and thinking-mode capture.
-- Per-query average system CPU and used-memory capture with benchmark aggregates.
+- Per-query average system CPU, Apple Silicon GPU, and used-memory capture with benchmark aggregates.
 - CPU, RAM, process/thread, Apple Silicon GPU, VRAM, and loaded-model panels.
 - Persistent SQLite history with JSON/CSV exports and retention controls.
 - Responsive desktop, iPad, and phone dashboard.
@@ -61,6 +61,7 @@ Override inputs with `BENCHMARK_LABEL`, `BENCHMARK_PROMPT`, and `OLLAMA_PROXY_UR
 | `GET /healthz` | Ollama-aware health check |
 | `GET /version` | Proxy name and semantic version |
 | `GET /benchmarks` | Historical aggregates grouped by model |
+| `POST /requests/:id/cancel` | Authenticated cancellation of an active completion |
 | `GET /web-tools` | Persistent web-tool call history, linked to LLM requests |
 | `GET /export.json` | Complete request history as JSON |
 | `GET /export.csv` | Complete history as downloadable CSV |

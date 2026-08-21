@@ -16,7 +16,7 @@ enum APIResponses {
 
     static func csv(_ records: [RequestRecord]) -> Response {
         let formatter = ISO8601DateFormatter()
-        var lines = ["id,model,endpoint,started_at,ended_at,prompt_tokens,output_tokens,ttft_seconds,prompt_tokens_per_second,output_tokens_per_second,total_seconds,load_seconds,temperature,context_length,thinking,benchmark_label,resource_samples,average_cpu_percent,average_memory_used_bytes,error"]
+        var lines = ["id,model,endpoint,started_at,ended_at,prompt_tokens,output_tokens,ttft_seconds,prompt_tokens_per_second,output_tokens_per_second,total_seconds,load_seconds,temperature,context_length,thinking,benchmark_label,resource_samples,average_cpu_percent,average_gpu_percent,average_memory_used_bytes,error"]
         for record in records {
             let fields: [String] = [
                 record.id.map { String($0) } ?? "", record.model, record.endpoint,
@@ -32,6 +32,7 @@ enum APIResponses {
                 record.thinkingEnabled.map { String($0) } ?? "",
                 record.benchmarkLabel ?? "", String(record.resourceSampleCount),
                 record.averageCPUPercent.map { String(format: "%.3f", $0) } ?? "",
+                record.averageGPUPercent.map { String(format: "%.3f", $0) } ?? "",
                 record.averageMemoryUsedBytes.map(String.init) ?? "", record.error ?? ""
             ]
             lines.append(fields.map(csvEscape).joined(separator: ","))

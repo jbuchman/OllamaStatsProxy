@@ -100,6 +100,23 @@ body {
   opacity: 0.6;
 }
 
+.stop-button {
+  appearance: none;
+  border: 1px solid color-mix(in srgb, var(--red) 55%, var(--edge));
+  border-radius: 5px;
+  background: transparent;
+  color: var(--red);
+  padding: 2px 7px;
+  font: inherit;
+  cursor: pointer;
+}
+.stop-button:hover:not(:disabled), .stop-button:focus-visible {
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  outline: none;
+}
+.stop-button:disabled { cursor: wait; opacity: 0.6; }
+
 .settings { border-color: #425b86; }
 .settings summary { color: var(--blue); font-weight: 800; cursor: pointer; }
 .settings-grid {
@@ -309,6 +326,10 @@ td.num {
 }
 
 .state.error {
+  color: var(--red);
+}
+
+.state.cancelled {
   color: var(--red);
 }
 

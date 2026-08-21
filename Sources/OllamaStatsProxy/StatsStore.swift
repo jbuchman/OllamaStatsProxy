@@ -13,6 +13,8 @@ actor StatsStore {
         var count = 0
         var cpuTotal = 0.0
         var cpuCount = 0
+        var gpuTotal = 0.0
+        var gpuCount = 0
         var memoryTotal: Int64 = 0
         var memoryCount = 0
     }
@@ -40,6 +42,7 @@ actor StatsStore {
                 table.column("benchmarkLabel", .text)
                 table.column("resourceSampleCount", .integer).notNull().defaults(to: 0)
                 table.column("averageCPUPercent", .double)
+                table.column("averageGPUPercent", .double)
                 table.column("averageMemoryUsedBytes", .integer)
                 table.column("error", .text)
             }
@@ -91,6 +94,12 @@ actor StatsStore {
                 try db.alter(table: RequestRecord.databaseTableName) { $0.add(column: "averageMemoryUsedBytes", .integer) }
             }
         }
+        migrator.registerMigration("addGPUMetrics") { db in
+            let columns = try db.columns(in: RequestRecord.databaseTableName).map(\.name)
+            if !columns.contains("averageGPUPercent") {
+                try db.alter(table: RequestRecord.databaseTableName) { $0.add(column: "averageGPUPercent", .double) }
+            }
+        }
         try migrator.migrate(database)
         try database.write { db in
             try db.execute(
@@ -108,7 +117,8 @@ actor StatsStore {
             promptEvalDurationNanoseconds: nil, evalDurationNanoseconds: nil,
             temperature: metadata.temperature, contextLength: metadata.contextLength,
             thinkingEnabled: metadata.thinkingEnabled, benchmarkLabel: metadata.benchmarkLabel,
-            resourceSampleCount: 0, averageCPUPercent: nil, averageMemoryUsedBytes: nil,
+            resourceSampleCount: 0, averageCPUPercent: nil, averageGPUPercent: nil,
+            averageMemoryUsedBytes: nil,
             error: nil
         )
         let id = try database.write { db -> Int64 in
@@ -137,6 +147,10 @@ actor StatsStore {
         if let cpu = usage.cpuPercent {
             samples.cpuTotal += cpu
             samples.cpuCount += 1
+        }
+        if let gpu = usage.gpuPercent {
+            samples.gpuTotal += gpu
+            samples.gpuCount += 1
         }
         if let memory = usage.memoryUsedBytes {
             samples.memoryTotal += memory
@@ -175,6 +189,7 @@ actor StatsStore {
         if let samples = resourceSamples.removeValue(forKey: requestID) {
             record.resourceSampleCount = samples.count
             if samples.cpuCount > 0 { record.averageCPUPercent = samples.cpuTotal / Double(samples.cpuCount) }
+            if samples.gpuCount > 0 { record.averageGPUPercent = samples.gpuTotal / Double(samples.gpuCount) }
             if samples.memoryCount > 0 { record.averageMemoryUsedBytes = samples.memoryTotal / Int64(samples.memoryCount) }
         }
         record.endedAt = Date()
@@ -200,7 +215,8 @@ actor StatsStore {
             .map { record in
                 let liveCount = recentTokenTimes[record.id ?? -1, default: []].filter { now.timeIntervalSince($0) <= 2 }.count
                 let state: String
-                if record.error != nil { state = "error" }
+                if record.error == ActiveRequestRegistry.cancellationReason { state = "cancelled" }
+                else if record.error != nil { state = "error" }
                 else if record.endedAt != nil { state = "done" }
                 else if record.outputTokens == 0 && record.elapsedSeconds > 2 { state = "thinking/loading" }
                 else { state = "generating" }
@@ -218,6 +234,7 @@ actor StatsStore {
                     thinkingEnabled: record.thinkingEnabled, benchmarkLabel: record.benchmarkLabel,
                     resourceSampleCount: record.resourceSampleCount,
                     averageCPUPercent: record.averageCPUPercent,
+                    averageGPUPercent: record.averageGPUPercent,
                     averageMemoryUsedBytes: record.averageMemoryUsedBytes,
                     state: state, error: record.error
                 )
@@ -243,6 +260,7 @@ actor StatsStore {
                   AVG(CASE WHEN firstTokenAt IS NOT NULL THEN (julianday(firstTokenAt)-julianday(startedAt))*86400.0 END) AS averageTimeToFirstTokenSeconds,
                   AVG(COALESCE(totalDurationNanoseconds / 1000000000.0, (julianday(endedAt)-julianday(startedAt))*86400.0)) AS averageTotalDurationSeconds,
                   AVG(averageCPUPercent) AS averageCPUPercent,
+                  AVG(averageGPUPercent) AS averageGPUPercent,
                   AVG(averageMemoryUsedBytes) AS averageMemoryUsedBytes
                 FROM requests WHERE endedAt IS NOT NULL AND error IS NULL GROUP BY model ORDER BY averageOutputTokensPerSecond DESC
                 """)

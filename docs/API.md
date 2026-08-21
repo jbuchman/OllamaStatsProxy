@@ -8,7 +8,7 @@ Returns live token totals, recent requests, Ollama status, system/process measur
 
 Nullable measurements are `null` when Ollama or macOS does not report them. Active token rates use a rolling two-second window; completed native Ollama requests use `eval_duration` when present.
 
-Each query record also includes `resourceSampleCount`, `averageCPUPercent`, and `averageMemoryUsedBytes`. CPU and used system memory are sampled once per second while a completion is active and persisted with the request.
+Each query record also includes `resourceSampleCount`, `averageCPUPercent`, `averageGPUPercent`, and `averageMemoryUsedBytes`. CPU, Apple Silicon GPU utilization, and used system memory are sampled once per second while a completion is active and persisted with the request. GPU utilization is `null` when the platform does not expose compatible `IOAccelerator` telemetry.
 
 ## Health and version
 
@@ -27,6 +27,7 @@ Returns completed, successful requests grouped by model:
   "averageTimeToFirstTokenSeconds": 0.41,
   "averageTotalDurationSeconds": 5.08,
   "averageCPUPercent": 72.4,
+  "averageGPUPercent": 94.1,
   "averageMemoryUsedBytes": 48318382080
 }]
 ```
@@ -34,6 +35,10 @@ Returns completed, successful requests grouped by model:
 ## Exports
 
 `GET /export.json` returns all stored request records. `GET /export.csv` returns equivalent spreadsheet-friendly data.
+
+## Cancelling active requests
+
+Authenticated `POST /requests/:id/cancel` cancels an active upstream generation or server-owned tool orchestration task. Successful requests return `202` with `{"requestID":123,"status":"cancelling"}`; a repeated cancellation returns `409`, and a finished or unknown request returns `404`. The completion is retained with state `cancelled` and error `cancelled by administrator`.
 
 ## `GET /web-tools`
 

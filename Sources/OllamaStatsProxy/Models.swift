@@ -31,6 +31,7 @@ struct RequestRecord: Codable, FetchableRecord, PersistableRecord, Sendable {
     var benchmarkLabel: String?
     var resourceSampleCount: Int
     var averageCPUPercent: Double?
+    var averageGPUPercent: Double?
     var averageMemoryUsedBytes: Int64?
     var error: String?
 
@@ -90,6 +91,7 @@ struct RequestSnapshot: Codable, Sendable {
     var benchmarkLabel: String?
     var resourceSampleCount: Int
     var averageCPUPercent: Double?
+    var averageGPUPercent: Double?
     var averageMemoryUsedBytes: Int64?
     var state: String
     var error: String?
@@ -103,6 +105,7 @@ struct BenchmarkSummary: Codable, Sendable, FetchableRecord {
     var averageTimeToFirstTokenSeconds: Double?
     var averageTotalDurationSeconds: Double
     var averageCPUPercent: Double?
+    var averageGPUPercent: Double?
     var averageMemoryUsedBytes: Double?
 }
 

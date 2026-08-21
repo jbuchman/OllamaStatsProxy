@@ -31,6 +31,7 @@ enum OllamaStatsProxyMain {
             configuration: .init(redirectConfiguration: .disallow)
         )
         let metrics = MetricRecorder(store: store)
+        let activeRequests = ActiveRequestRegistry()
         let ollama = OllamaClient(httpClient: client, upstream: options.upstream)
         let webToolMonitor = WebToolMonitor(store: store)
         let webTools = WebTools(
@@ -45,6 +46,7 @@ enum OllamaStatsProxyMain {
         )
         let proxy = Proxy(
             upstream: options.upstream, client: client, store: store, metrics: metrics,
+            activeRequests: activeRequests,
             orchestrator: orchestrator
         )
         let router = Router()
@@ -147,6 +149,28 @@ enum OllamaStatsProxyMain {
             let days = request.uri.queryParameters.get("olderThanDays", as: Int.self) ?? 0
             let cutoff = days > 0 ? Date().addingTimeInterval(-Double(days) * 86_400) : Date()
             return try APIResponses.json(PurgeResponse(deleted: await store.purge(olderThan: cutoff), olderThan: cutoff))
+        }
+        router.post("/requests/:id/cancel") { request, context in
+            guard await adminAuthentication.isAuthenticated(headers: request.headers) else {
+                return try APIResponses.json(["error": "authentication required"], status: .unauthorized)
+            }
+            guard let requestID = context.parameters.get("id", as: Int64.self) else {
+                return try APIResponses.json(["error": "invalid request id"], status: .badRequest)
+            }
+            switch await activeRequests.cancel(requestID) {
+            case .cancelled:
+                return try APIResponses.json(
+                    CancelRequestResponse(requestID: requestID, status: "cancelling"),
+                    status: .accepted
+                )
+            case .alreadyRequested:
+                return try APIResponses.json(
+                    CancelRequestResponse(requestID: requestID, status: "already cancelling"),
+                    status: .conflict
+                )
+            case .notActive:
+                return try APIResponses.json(["error": "request is not active"], status: .notFound)
+            }
         }
 
         // Serve dashboard assets bundled into the executable.

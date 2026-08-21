@@ -21,4 +21,19 @@ curl -fsS http://127.0.0.1:11437/api/generate -H 'Content-Type: application/json
 sleep 1
 stats="$(curl -fsS http://127.0.0.1:11437/stats)"
 python3 -c 'import json,sys; d=json.load(sys.stdin); r=d["recentRequests"][0]; assert r["outputTokens"]==2 and r["promptTokens"]==4 and r["benchmarkLabel"]=="integration"' <<<"$stats"
+
+# Start a deliberately slow stream, discover its live request ID, and cancel it
+# through the same authenticated endpoint used by the dashboard.
+curl -sS http://127.0.0.1:11437/api/generate -H 'Content-Type: application/json' -d '{"model":"mock-slow","prompt":"slow","stream":true}' >/dev/null & slow_curl_pid=$!
+slow_id=""
+for _ in {1..30}; do
+  slow_id="$(curl -fsS http://127.0.0.1:11437/stats | python3 -c 'import json,sys; print(next((r["id"] for r in json.load(sys.stdin)["recentRequests"] if r["model"]=="mock-slow" and r.get("endedAt") is None), ""))')"
+  test -n "$slow_id" && break
+  sleep .1
+done
+test -n "$slow_id"
+curl -fsS -X POST "http://127.0.0.1:11437/requests/$slow_id/cancel" | grep -q 'cancelling'
+wait "$slow_curl_pid" || true
+sleep .2
+curl -fsS http://127.0.0.1:11437/stats | python3 -c 'import json,sys; r=next(r for r in json.load(sys.stdin)["recentRequests"] if r["model"]=="mock-slow"); assert r["state"]=="cancelled" and r["error"]=="cancelled by administrator"'
 echo "integration test passed"

@@ -3,15 +3,18 @@ import Foundation
 enum SystemCollector {
     struct ResourceUsage: Sendable {
         var cpuPercent: Double?
+        var gpuPercent: Double?
         var memoryUsedBytes: Int64?
     }
 
     static func collectResourceUsage() async -> ResourceUsage {
         async let memoryOutput = run("/usr/bin/vm_stat", [])
         async let cpuOutput = run("/usr/bin/top", ["-l", "1", "-n", "0"])
-        let (memory, cpu) = await (memoryOutput, cpuOutput)
+        async let gpuOutput = run("/usr/sbin/ioreg", ["-r", "-d", "1", "-c", "IOAccelerator"])
+        let (memory, cpu, gpu) = await (memoryOutput, cpuOutput, gpuOutput)
         return ResourceUsage(
             cpuPercent: parseCPU(cpu),
+            gpuPercent: parseGPU(gpu).deviceUtilizationPercent.map(Double.init),
             memoryUsedBytes: parseMemory(memory).used
         )
     }

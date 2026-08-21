@@ -13,14 +13,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         length = int(self.headers.get("content-length", 0))
-        self.rfile.read(length)
+        request = json.loads(self.rfile.read(length) or b"{}")
         if self.path != "/api/generate": return self.send_error(404)
         self.send_response(200)
         self.send_header("Content-Type", "application/x-ndjson")
         self.end_headers()
-        for token in ("hello", " world"):
-            self.wfile.write((json.dumps({"response": token, "done": False}) + "\n").encode())
-            self.wfile.flush(); time.sleep(.03)
+        tokens = (["working"] * 200) if request.get("prompt") == "slow" else ("hello", " world")
+        try:
+            for token in tokens:
+                self.wfile.write((json.dumps({"response": token, "done": False}) + "\n").encode())
+                self.wfile.flush(); time.sleep(.05 if request.get("prompt") == "slow" else .03)
+        except (BrokenPipeError, ConnectionResetError):
+            return
         final = {"done": True, "prompt_eval_count": 4, "eval_count": 2,
                  "total_duration": 100000000, "load_duration": 10000000,
                  "prompt_eval_duration": 20000000, "eval_duration": 60000000}
