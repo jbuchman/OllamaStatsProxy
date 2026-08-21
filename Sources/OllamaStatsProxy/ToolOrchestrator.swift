@@ -29,6 +29,9 @@ struct ToolOrchestrator: Sendable {
     static let searchToolName = "ollama_proxy_search_web"
     static let fetchToolName = "ollama_proxy_fetch_url"
     static let optionalToolGuidance = "Web search and URL fetching are optional capabilities. Use them only when the request needs current external information or asks you to inspect a web page. For reasoning, coding, writing, or other self-contained requests, answer directly without a tool. The absence of a relevant tool never prevents you from answering normally."
+    static func requiredToolGuidance(currentDate: String) -> String {
+        "The current system date is \(currentDate). You have live internet access through the web tools supplied with this request; do not claim that you cannot browse or that your training cutoff prevents current research. This request asks for recent, current, or internet-based information. Use the available web tools before answering. Search first when discovery is needed, fetch promising sources for details, and base the answer on retrieved information rather than model-training knowledge."
+    }
 
     let upstream: String
     let client: HTTPClient
@@ -58,7 +61,7 @@ struct ToolOrchestrator: Sendable {
         requestObject["tools"] = mergeTools(
             requestObject["tools"] as? [[String: Any]] ?? [], configuration: configuration
         )
-        addOptionalToolGuidance(to: &requestObject)
+        addToolGuidance(to: &requestObject, required: Self.requiresWebResearch(requestObject))
 
         for round in 0...configuration.serverToolRounds {
             let response = try await post(path: path, headers: incomingHeaders, object: requestObject)
@@ -147,9 +150,29 @@ struct ToolOrchestrator: Sendable {
             #"\b[a-z0-9-]+\.(com|org|net|io|dev|gov|edu)(/[^\s]*)?\b"#,
             #"\b(search|browse) (the )?(web|internet|online)\b"#,
             #"\b(web search|internet search|search online)\b"#,
+            #"\b(feel free to|please|you can|you may|go ahead and)?\s*(use|check|consult) (the )?(web|internet|online sources?)\b"#,
+            #"\b(access to|connected to|can access|have access to) (the )?(web|internet)\b"#,
+            #"\b(current date|today's date|what date is it|as of (today|now))\b"#,
             #"\blook .{0,40} up (online|on the web|on the internet)\b"#,
             #"\bfind .{0,40} (online|on the web|on the internet)\b"#,
             #"\b(latest news|recent news|current events|today's news|up-to-date information)\b"#,
+            #"\b(recent|latest|newest|up[- ]to[- ]date)\b"#,
+            #"\b(cite|provide|include) (your )?(sources|citations)\b"#
+        ]
+        return patterns.contains { content.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil }
+    }
+
+    static func requiresWebResearch(_ object: [String: Any]) -> Bool {
+        guard let messages = object["messages"] as? [[String: Any]],
+              let userMessage = messages.last(where: { ($0["role"] as? String) == "user" }),
+              let content = textContent(userMessage["content"]) else { return false }
+        let patterns = [
+            #"https?://|www\."#,
+            #"\b(search|browse) (the )?(web|internet|online)\b"#,
+            #"\b(feel free to|please|you can|you may|go ahead and)?\s*(use|check|consult) (the )?(web|internet|online sources?)\b"#,
+            #"\b(access to|connected to|can access|have access to) (the )?(web|internet)\b"#,
+            #"\b(current date|today's date|what date is it|as of (today|now))\b"#,
+            #"\b(recent|latest|newest|up[- ]to[- ]date|current events|today's)\b"#,
             #"\b(cite|provide|include) (your )?(sources|citations)\b"#
         ]
         return patterns.contains { content.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil }
@@ -166,17 +189,29 @@ struct ToolOrchestrator: Sendable {
         return nil
     }
 
-    private func addOptionalToolGuidance(to request: inout [String: Any]) {
+    private func addToolGuidance(to request: inout [String: Any], required: Bool) {
         guard var messages = request["messages"] as? [[String: Any]] else { return }
+        let guidance = required
+            ? Self.requiredToolGuidance(currentDate: Self.currentDateString())
+            : Self.optionalToolGuidance
         if let firstSystem = messages.firstIndex(where: { ($0["role"] as? String) == "system" }),
            let content = messages[firstSystem]["content"] as? String {
-            if !content.contains(Self.optionalToolGuidance) {
-                messages[firstSystem]["content"] = content + "\n\n" + Self.optionalToolGuidance
+            if !content.contains(guidance) {
+                messages[firstSystem]["content"] = content + "\n\n" + guidance
             }
         } else {
-            messages.insert(["role": "system", "content": Self.optionalToolGuidance], at: 0)
+            messages.insert(["role": "system", "content": guidance], at: 0)
         }
         request["messages"] = messages
+    }
+
+    private static func currentDateString() -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: Date())
     }
 
     private func toolCalls(from object: [String: Any], kind: EndpointKind) -> [ToolCall] {

@@ -11,6 +11,8 @@ curl -fsS http://127.0.0.1:11437/public/dashboard.js | grep -q 'loadConfiguratio
 curl -fsS http://127.0.0.1:11437/version | grep -q '0.1.1'
 curl -fsS http://127.0.0.1:11437/healthz | grep -q 'ok'
 curl -fsS http://127.0.0.1:11437/api/chat -H 'Content-Type: application/json' -d '{"model":"mock","messages":[{"role":"user","content":"Given url(#paint14_radial_13003_106798), append _red using JavaScript"}],"stream":false}' | grep -q 'value.replace'
+curl -fsS http://127.0.0.1:11437/api/chat -H 'Content-Type: application/json' -d '{"model":"mock","messages":[{"role":"user","content":"Is there a recent Linux distro with up to date pre configured GNUstep and Window Maker? Feel free to use the internet"}],"stream":false}' | grep -q 'Live internet access'
+curl -fsS http://127.0.0.1:11437/api/chat -H 'Content-Type: application/json' -d '{"model":"mock","messages":[{"role":"user","content":"Not only do you have access to the internet, but you are confused about the current date (Aug 21, 2026)"}],"stream":false}' | grep -q 'current date was supplied'
 
 curl -fsS -X PUT http://127.0.0.1:11437/config -H 'Content-Type: application/json' -d '{"webSearchProvider":null,"webSearchAPIKey":null,"clearWebSearchAPIKey":false,"webSearchURL":null,"webFetchMaxMB":8,"webFetchMaxCharacters":50000,"webFetchEnabled":false,"webFetchAllowPrivateNetworks":false,"serverToolsEnabled":true,"serverToolRounds":4,"adminPassword":null}' | grep -q '"webFetchEnabled" : false'
 test "$(curl -sS -o /dev/null -w '%{http_code}' 'http://127.0.0.1:11437/tools/web/fetch?url=http://127.0.0.1:11436/api/version')" = 403

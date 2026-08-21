@@ -2,6 +2,11 @@
 
 All notable changes will be documented here.
 
+## Unreleased
+
+- Strengthened web-research routing for recent/latest questions and natural-language permission to use the internet.
+- Added current-date and live-internet capability grounding for temporal follow-up questions.
+
 ## 0.1.1 - 2026-08-21
 
 - Added per-query Apple Silicon GPU sampling and persisted benchmark averages.

@@ -18,8 +18,14 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("content-length", 0))
         request = json.loads(self.rfile.read(length) or b"{}")
         if self.path == "/api/chat":
-            content = ("None of the provided functions are suitable." if request.get("tools")
-                       else "Use value.replace(/\\)$/, '_red)')")
+            system = "\n".join(message.get("content", "") for message in request.get("messages", [])
+                               if message.get("role") == "system")
+            if request.get("tools") and "current system date" in system and "live internet access" in system:
+                content = "Live internet access is enabled and the current date was supplied by the proxy."
+            elif request.get("tools"):
+                content = "None of the provided functions are suitable."
+            else:
+                content = "Use value.replace(/\\)$/, '_red)')"
             return self.send_json({
                 "message": {"role": "assistant", "content": content}, "done": True,
                 "prompt_eval_count": 8, "eval_count": 4,
