@@ -1,0 +1,12 @@
+{
+  "adminPasswordHash": null,
+  "serverToolRounds": 4,
+  "serverToolsEnabled": true,
+  "webFetchEnabled": true,
+  "webFetchAllowPrivateNetworks": false,
+  "webFetchMaxBytes": 8388608,
+  "webFetchMaxCharacters": 50000,
+  "webSearchAPIKey": null,
+  "webSearchProvider": null,
+  "webSearchURL": null
+}

@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>otop — Ollama monitor</title>
+    <link rel="stylesheet" href="/public/dashboard.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="panel header">
+        <span class="brand">otop – ollama monitor</span>
+        <span id="connection">connecting…</span>
+        <span class="header-actions">
+          <span class="dim" id="uptime"></span>
+          <button id="clearStats" class="danger-button" type="button" title="Delete completion and web-tool history">
+            clear stats
+          </button>
+        </span>
+      </section>
+
+      <details id="settingsPanel" class="panel settings">
+        <summary>settings</summary>
+        <form id="settingsForm" class="settings-grid">
+          <label>search provider
+            <select id="configProvider"><option value="">none</option><option value="brave">Brave</option><option value="tavily">Tavily</option><option value="searxng">SearXNG</option></select>
+          </label>
+          <label>API key <span id="apiKeyState" class="dim"></span>
+            <input id="configAPIKey" type="password" autocomplete="off" placeholder="leave blank to keep current key" />
+          </label>
+          <label class="settings-wide">search URL
+            <input id="configSearchURL" type="url" placeholder="provider default, or SearXNG search URL" />
+          </label>
+          <label>fetch limit (MB)<input id="configFetchMB" type="number" min="1" max="512" required /></label>
+          <label>returned characters<input id="configFetchCharacters" type="number" min="1000" max="1000000" step="1000" required /></label>
+          <label>tool rounds<input id="configToolRounds" type="number" min="1" max="20" required /></label>
+          <label>new admin password<input id="configAdminPassword" name="new-password" type="password" minlength="10" autocomplete="new-password" placeholder="leave blank to keep current password" /></label>
+          <label class="checkbox-label"><input id="configFetchEnabled" type="checkbox" /> allow web fetch</label>
+          <label class="checkbox-label warning-option"><input id="configFetchPrivateNetworks" type="checkbox" /> allow private/local fetch targets</label>
+          <label class="checkbox-label"><input id="configToolsEnabled" type="checkbox" /> enable server-owned tools</label>
+          <div class="settings-actions settings-wide">
+            <button class="primary-button" type="submit">save settings</button>
+            <button id="clearAPIKey" class="secondary-button" type="button">clear API key</button>
+            <button id="adminLogout" class="secondary-button" type="button">log out</button>
+            <span id="configStatus" class="dim"></span>
+          </div>
+        </form>
+      </details>
+
+      <dialog id="adminLoginDialog" class="login-dialog">
+        <form id="adminLoginForm" action="/admin/login" method="post" autocomplete="on">
+          <h2>admin authentication</h2>
+          <p class="dim">Enter the monitor administration password to open settings.</p>
+          <label>username<input id="adminLoginUsername" name="username" type="text" value="admin" autocomplete="username" readonly /></label>
+          <label>password<input id="adminLoginPassword" name="password" type="password" autocomplete="current-password" required /></label>
+          <div class="settings-actions">
+            <button class="primary-button" type="submit">unlock settings</button>
+            <button id="cancelAdminLogin" class="secondary-button" type="button">cancel</button>
+          </div>
+          <p id="adminLoginStatus" class="bad"></p>
+        </form>
+      </dialog>
+
+      <section class="panel tokens">
+        <span class="title">tokens</span>
+        <div class="summary">
+          <span>
+            <b class="value pink" id="out">0</b>
+            output tok
+          </span>
+          <span>
+            <b class="value" style="color: var(--cyan)" id="prompt">0</b>
+            prompt tok
+          </span>
+          <span>
+            <b class="value" id="requests">0</b>
+            requests
+          </span>
+          <span>
+            <b class="value" style="color: var(--green)" id="tps">0.0</b>
+            tok/s now
+          </span>
+        </div>
+        <div class="spark" id="spark"></div>
+        <div class="table-wrap">
+          <table class="responsive-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>model</th>
+                <th>endpoint</th>
+                <th class="num">out tok</th>
+                <th class="num">prompt</th>
+                <th class="num">tok/s</th>
+                <th class="num">cpu avg</th>
+                <th class="num">ram avg</th>
+                <th class="num">time</th>
+                <th>state</th>
+              </tr>
+            </thead>
+            <tbody id="requestRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel web-tools">
+        <span class="title">web tool resources</span>
+        <div class="summary web-summary">
+          <span><b class="value" id="webTotal">0</b> calls</span>
+          <span><b class="value" id="webSearches">0</b> searches</span>
+          <span><b class="value" id="webFetches">0</b> fetches</span>
+          <span><b class="value" id="webBytes">0 B</b> received</span>
+        </div>
+        <div class="table-wrap">
+          <table class="responsive-table">
+            <thead><tr><th>time</th><th>caller</th><th>tool</th><th>resource</th><th class="num">results / bytes</th><th class="num">time</th><th>state</th></tr></thead>
+            <tbody id="webToolRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <div class="grid">
+        <section class="panel cpu">
+          <span class="title">cpu / system</span>
+          <div id="system"></div>
+          <div class="table-wrap">
+            <table class="responsive-table">
+              <thead>
+                <tr>
+                  <th>pid</th>
+                  <th>proc</th>
+                  <th class="num">cpu%</th>
+                  <th class="num">threads</th>
+                  <th class="num">rss</th>
+                </tr>
+              </thead>
+              <tbody id="processRows"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel gpu">
+          <span class="title">gpu (apple silicon)</span>
+          <div id="gpu"></div>
+        </section>
+      </div>
+
+      <section class="panel models">
+        <span class="title">loaded models</span>
+        <div class="table-wrap">
+          <table class="responsive-table">
+            <thead>
+              <tr>
+                <th>model</th>
+                <th class="num">size</th>
+                <th class="num">vram</th>
+                <th>placement</th>
+                <th>quant</th>
+                <th class="num">ctx</th>
+                <th class="num">expires</th>
+              </tr>
+            </thead>
+            <tbody id="modelRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel models">
+        <span class="title">benchmark history</span>
+        <div class="table-wrap">
+          <table class="responsive-table">
+            <thead>
+              <tr>
+                <th>model</th>
+                <th class="num">runs</th>
+                <th class="num">generation tok/s</th>
+                <th class="num">prompt tok/s</th>
+                <th class="num">TTFT</th>
+                <th class="num">total</th>
+                <th class="num">cpu avg</th>
+                <th class="num">ram avg</th>
+              </tr>
+            </thead>
+            <tbody id="benchmarkRows"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <script src="/public/dashboard.js" defer></script>
+  </body>
+</html>

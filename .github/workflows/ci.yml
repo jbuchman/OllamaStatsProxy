@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tool versions
+        run: |
+          swift --version
+          node --version
+      - name: Check dashboard JavaScript
+        run: node --check Sources/OllamaStatsProxy/Public/dashboard.js
+      - name: Build release executable
+        run: swift build -c release
+      - name: Run unit tests
+        run: swift test
+      - name: Run integration test
+        run: bash Scripts/integration-test.sh
+
