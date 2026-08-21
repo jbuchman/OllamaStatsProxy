@@ -18,4 +18,6 @@ All notable changes will be documented here.
 - Authenticated model preload, keep-alive, expiration, and unload controls.
 - Persistent model-operation progress indicators with per-model duplicate prevention.
 - Interaction-safe table refreshes and visible lifecycle success/residency feedback.
+- Flicker-free active request details that auto-open while running and close on completion.
+- Relevance-gated web-tool injection so self-contained coding and reasoning prompts remain transparent.
 - Private-network fetch protection enabled by default.

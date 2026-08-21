@@ -161,7 +161,7 @@ These endpoints are the building blocks for agent/tool integration: a chat clien
 
 ## Generic server-owned tool orchestration
 
-The proxy advertises its page-fetch tool on both supported chat protocols. When a web search provider is configured, it advertises the search tool as well:
+For ordinary requests the proxy remains transparent. It automatically advertises its page-fetch tool when the latest user message appears to request web access, a URL, fresh news, or citations. When a web search provider is configured, it advertises the search tool as well:
 
 - `POST /v1/chat/completions` (OpenAI-compatible)
 - `POST /api/chat` (native Ollama)
@@ -203,15 +203,15 @@ Disable automatic server tools globally with:
 --no-server-tools
 ```
 
-A particular request can opt out without changing the server by adding this top-level request field:
+A particular request can explicitly enable or disable proxy tools, bypassing automatic relevance detection, with this top-level request field:
 
 ```json
 {
-  "ollama_proxy_tools": false
+  "ollama_proxy_tools": true
 }
 ```
 
-The field is removed before forwarding to Ollama.
+Use `false` to force a transparent request. The field is removed during server-owned orchestration.
 
 ### Streaming compatibility
 

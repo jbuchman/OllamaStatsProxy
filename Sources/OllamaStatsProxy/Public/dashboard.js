@@ -10,6 +10,9 @@ let requestTotalPages = 1;
 let webPage = 1;
 let webTotalPages = 1;
 let expandedRequestID = null;
+let autoExpandedRequestID = null;
+let expandedRunningRequestID = null;
+const dismissedAutoRequestIDs = new Set();
 let filterTimer = null;
 let refreshSequence = 0;
 const modelActionsInProgress = new Map();
@@ -99,6 +102,26 @@ async function refresh() {
     requestTotalPages = requests.totalPages;
     webPage = webTools.page;
     webTotalPages = webTools.totalPages;
+    const activeRequestIDs = new Set(requests.items.filter((request) => request.endedAt == null).map((request) => request.id));
+    for (const requestID of dismissedAutoRequestIDs) {
+      if (!activeRequestIDs.has(requestID)) dismissedAutoRequestIDs.delete(requestID);
+    }
+    if (expandedRunningRequestID != null && !activeRequestIDs.has(expandedRunningRequestID)) {
+      if (expandedRequestID === expandedRunningRequestID) expandedRequestID = null;
+      if (autoExpandedRequestID === expandedRunningRequestID) autoExpandedRequestID = null;
+      expandedRunningRequestID = null;
+    }
+    if (autoExpandedRequestID != null && !activeRequestIDs.has(autoExpandedRequestID)) {
+      if (expandedRequestID === autoExpandedRequestID) expandedRequestID = null;
+      autoExpandedRequestID = null;
+    }
+    const newestActiveRequest = requests.items.find((request) => request.endedAt == null);
+    if (expandedRequestID == null && requestPage === 1 && newestActiveRequest
+        && !dismissedAutoRequestIDs.has(newestActiveRequest.id)) {
+      expandedRequestID = newestActiveRequest.id;
+      autoExpandedRequestID = newestActiveRequest.id;
+      expandedRunningRequestID = newestActiveRequest.id;
+    }
 
     $("connection").className = data.ollamaReachable ? "status" : "bad";
     $("connection").textContent = data.ollamaReachable
@@ -142,8 +165,7 @@ async function refresh() {
       )
       .join("");
 
-    updateTableHTML("requestRows",
-      requests.items
+    const requestRowsHTML = requests.items
         .map(
           (r) => `
         <tr class="history-row" data-request-id="${r.id}" title="Show request timing details">
@@ -164,7 +186,13 @@ async function refresh() {
         </tr>`
         )
         .join("") ||
-      `<tr>${cell("", "no requests through proxy yet", "dim wide")}</tr>`);
+      `<tr>${cell("", "no requests through proxy yet", "dim wide")}</tr>`;
+    // Keep an expanded active row mounted. Replacing its parent tbody every
+    // second causes visible flicker and can interrupt pointer interactions.
+    if (!(expandedRequestID != null && activeRequestIDs.has(expandedRequestID)
+        && $("requestRows").querySelector(`tr[data-request-id="${expandedRequestID}"]`))) {
+      updateTableHTML("requestRows", requestRowsHTML);
+    }
     updatePagination("request", requestPage, requestTotalPages, requests.totalItems);
     if (expandedRequestID != null && requests.items.some((request) => request.id === expandedRequestID)) {
       await loadRequestDetail(expandedRequestID);
@@ -311,6 +339,7 @@ async function loadRequestDetail(requestID) {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const detail = await response.json();
     const request = detail.request;
+    if (request.endedAt == null && expandedRequestID === requestID) expandedRunningRequestID = requestID;
     const total = Math.max(request.elapsedSeconds, request.totalDurationSeconds ?? 0, 0.001);
     const load = Math.min(request.loadDurationSeconds ?? 0, total);
     const prompt = request.promptTokensPerSecond > 0 ? request.promptTokens / request.promptTokensPerSecond : 0;
@@ -328,10 +357,7 @@ async function loadRequestDetail(requestID) {
         "tool"
       )),
     ].join("");
-    const existing = sourceRow.nextElementSibling;
-    if (existing?.classList.contains("detail-row")) existing.remove();
-    sourceRow.insertAdjacentHTML("afterend", `<tr class="detail-row"><td colspan="12">
-      <div class="request-detail">
+    const detailHTML = `
         <div class="detail-meta">
           <span>started ${new Date(request.startedAt).toLocaleString()}</span>
           <span>label ${escapeHTML(request.benchmarkLabel ?? "–")}</span>
@@ -341,8 +367,14 @@ async function loadRequestDetail(requestID) {
           <span>${detail.webTools.length} linked tool call${detail.webTools.length === 1 ? "" : "s"}</span>
         </div>
         <div class="timeline">${timeline || `<span class="dim">Timing phases are not available for this request.</span>`}</div>
-      </div>
-    </td></tr>`);
+      `;
+    const existing = sourceRow.nextElementSibling;
+    if (existing?.classList.contains("detail-row")) {
+      const detailElement = existing.querySelector(".request-detail");
+      if (detailElement.innerHTML !== detailHTML) detailElement.innerHTML = detailHTML;
+    } else {
+      sourceRow.insertAdjacentHTML("afterend", `<tr class="detail-row"><td colspan="12"><div class="request-detail">${detailHTML}</div></td></tr>`);
+    }
   } catch (error) {
     console.error(`Unable to load request #${requestID}:`, error);
   }
@@ -575,10 +607,15 @@ $("requestRows").addEventListener("click", (event) => {
   if (!row) return;
   const requestID = Number(row.dataset.requestId);
   if (expandedRequestID === requestID) {
+    if (autoExpandedRequestID === requestID) dismissedAutoRequestIDs.add(requestID);
     expandedRequestID = null;
+    autoExpandedRequestID = null;
+    expandedRunningRequestID = null;
     if (row.nextElementSibling?.classList.contains("detail-row")) row.nextElementSibling.remove();
   } else {
     expandedRequestID = requestID;
+    autoExpandedRequestID = null;
+    expandedRunningRequestID = null;
     loadRequestDetail(requestID);
   }
 });

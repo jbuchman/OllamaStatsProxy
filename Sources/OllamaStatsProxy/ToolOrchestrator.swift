@@ -28,6 +28,7 @@ struct ToolOrchestrator: Sendable {
 
     static let searchToolName = "ollama_proxy_search_web"
     static let fetchToolName = "ollama_proxy_fetch_url"
+    static let optionalToolGuidance = "Web search and URL fetching are optional capabilities. Use them only when the request needs current external information or asks you to inspect a web page. For reasoning, coding, writing, or other self-contained requests, answer directly without a tool. The absence of a relevant tool never prevents you from answering normally."
 
     let upstream: String
     let client: HTTPClient
@@ -41,8 +42,8 @@ struct ToolOrchestrator: Sendable {
               EndpointKind.from(path: path) != nil,
               let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
         else { return false }
-        if let raw = object["ollama_proxy_tools"] as? Bool, raw == false { return false }
-        return true
+        if let explicit = object["ollama_proxy_tools"] as? Bool { return explicit }
+        return Self.appearsToNeedWebTools(object)
     }
 
     func handle(path: String, incomingHeaders: HTTPFields, body: Data, requestID: Int64?) async throws -> Result {
@@ -57,6 +58,7 @@ struct ToolOrchestrator: Sendable {
         requestObject["tools"] = mergeTools(
             requestObject["tools"] as? [[String: Any]] ?? [], configuration: configuration
         )
+        addOptionalToolGuidance(to: &requestObject)
 
         for round in 0...configuration.serverToolRounds {
             let response = try await post(path: path, headers: incomingHeaders, object: requestObject)
@@ -134,6 +136,47 @@ struct ToolOrchestrator: Sendable {
             result.append(Self.makeFetchToolDefinition())
         }
         return result
+    }
+
+    static func appearsToNeedWebTools(_ object: [String: Any]) -> Bool {
+        guard let messages = object["messages"] as? [[String: Any]],
+              let userMessage = messages.last(where: { ($0["role"] as? String) == "user" }),
+              let content = textContent(userMessage["content"]), !content.isEmpty else { return false }
+        let patterns = [
+            #"https?://|www\."#,
+            #"\b[a-z0-9-]+\.(com|org|net|io|dev|gov|edu)(/[^\s]*)?\b"#,
+            #"\b(search|browse) (the )?(web|internet|online)\b"#,
+            #"\b(web search|internet search|search online)\b"#,
+            #"\blook .{0,40} up (online|on the web|on the internet)\b"#,
+            #"\bfind .{0,40} (online|on the web|on the internet)\b"#,
+            #"\b(latest news|recent news|current events|today's news|up-to-date information)\b"#,
+            #"\b(cite|provide|include) (your )?(sources|citations)\b"#
+        ]
+        return patterns.contains { content.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil }
+    }
+
+    private static func textContent(_ raw: Any?) -> String? {
+        if let text = raw as? String { return text }
+        if let parts = raw as? [[String: Any]] {
+            return parts.compactMap { part in
+                guard (part["type"] as? String) == "text" else { return nil }
+                return part["text"] as? String
+            }.joined(separator: "\n")
+        }
+        return nil
+    }
+
+    private func addOptionalToolGuidance(to request: inout [String: Any]) {
+        guard var messages = request["messages"] as? [[String: Any]] else { return }
+        if let firstSystem = messages.firstIndex(where: { ($0["role"] as? String) == "system" }),
+           let content = messages[firstSystem]["content"] as? String {
+            if !content.contains(Self.optionalToolGuidance) {
+                messages[firstSystem]["content"] = content + "\n\n" + Self.optionalToolGuidance
+            }
+        } else {
+            messages.insert(["role": "system", "content": Self.optionalToolGuidance], at: 0)
+        }
+        request["messages"] = messages
     }
 
     private func toolCalls(from object: [String: Any], kind: EndpointKind) -> [ToolCall] {

@@ -10,6 +10,7 @@ curl -fsS http://127.0.0.1:11437/monitor | grep -q 'ollama monitor'
 curl -fsS http://127.0.0.1:11437/public/dashboard.js | grep -q 'loadConfiguration'
 curl -fsS http://127.0.0.1:11437/version | grep -q '0.1.0'
 curl -fsS http://127.0.0.1:11437/healthz | grep -q 'ok'
+curl -fsS http://127.0.0.1:11437/api/chat -H 'Content-Type: application/json' -d '{"model":"mock","messages":[{"role":"user","content":"Given url(#paint14_radial_13003_106798), append _red using JavaScript"}],"stream":false}' | grep -q 'value.replace'
 
 curl -fsS -X PUT http://127.0.0.1:11437/config -H 'Content-Type: application/json' -d '{"webSearchProvider":null,"webSearchAPIKey":null,"clearWebSearchAPIKey":false,"webSearchURL":null,"webFetchMaxMB":8,"webFetchMaxCharacters":50000,"webFetchEnabled":false,"webFetchAllowPrivateNetworks":false,"serverToolsEnabled":true,"serverToolRounds":4,"adminPassword":null}' | grep -q '"webFetchEnabled" : false'
 test "$(curl -sS -o /dev/null -w '%{http_code}' 'http://127.0.0.1:11437/tools/web/fetch?url=http://127.0.0.1:11436/api/version')" = 403

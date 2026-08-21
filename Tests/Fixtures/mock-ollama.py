@@ -17,6 +17,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("content-length", 0))
         request = json.loads(self.rfile.read(length) or b"{}")
+        if self.path == "/api/chat":
+            content = ("None of the provided functions are suitable." if request.get("tools")
+                       else "Use value.replace(/\\)$/, '_red)')")
+            return self.send_json({
+                "message": {"role": "assistant", "content": content}, "done": True,
+                "prompt_eval_count": 8, "eval_count": 4,
+                "total_duration": 100000000, "eval_duration": 60000000
+            })
         if self.path != "/api/generate": return self.send_error(404)
         if "keep_alive" in request and request["keep_alive"] in ("0", "-1"):
             return self.send_json({"error": "numeric keep_alive required"}, status=400)
