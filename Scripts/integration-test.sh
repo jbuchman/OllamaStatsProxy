@@ -3,7 +3,7 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 python3 "$root/Tests/Fixtures/mock-ollama.py" & mock_pid=$!
 (cd /tmp && exec "$root/.build/debug/ollama-stats-proxy" --port 11437 --upstream http://127.0.0.1:11436 --database /tmp/ollama-stats-proxy-test.sqlite --config /tmp/ollama-stats-proxy-test.json) & proxy_pid=$!
-cleanup(){ kill "$proxy_pid" "$mock_pid" 2>/dev/null || true; rm -f /tmp/ollama-stats-proxy-test.sqlite* /tmp/ollama-stats-proxy-test.json; }
+cleanup(){ kill "$proxy_pid" "$mock_pid" 2>/dev/null || true; rm -f /tmp/ollama-stats-proxy-test.sqlite* /tmp/ollama-stats-proxy-test.json /tmp/ollama-lifecycle-response.json; }
 trap cleanup EXIT
 for _ in {1..30}; do curl -fsS http://127.0.0.1:11437/stats >/dev/null && break; sleep 1; done
 curl -fsS http://127.0.0.1:11437/monitor | grep -q 'ollama monitor'
@@ -39,4 +39,13 @@ wait "$slow_curl_pid" || true
 sleep .2
 curl -fsS http://127.0.0.1:11437/stats | python3 -c 'import json,sys; r=next(r for r in json.load(sys.stdin)["recentRequests"] if r["model"]=="mock-slow"); assert r["state"]=="cancelled" and r["error"]=="cancelled by administrator"'
 curl -fsS 'http://127.0.0.1:11437/requests?page=2&pageSize=1' | python3 -c 'import json,sys; p=json.load(sys.stdin); assert p["page"]==2 and p["pageSize"]==1 and p["totalItems"]>=2 and p["totalPages"]>=2 and len(p["items"])==1'
+curl -fsS 'http://127.0.0.1:11437/requests?page=1&pageSize=10&q=mock-slow&state=cancelled' | python3 -c 'import json,sys; p=json.load(sys.stdin); assert p["totalItems"]==1 and p["items"][0]["model"]=="mock-slow"'
+curl -fsS "http://127.0.0.1:11437/requests/$slow_id" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["request"]["id"] and isinstance(d["webTools"], list)'
+curl -fsS 'http://127.0.0.1:11437/web-tools/page?page=1&pageSize=10&q=api%2Fversion&state=done' | python3 -c 'import json,sys; p=json.load(sys.stdin); assert p["totalItems"]>=2 and all(r["state"]=="done" for r in p["items"])'
+curl -fsS -X POST http://127.0.0.1:11437/models/lifecycle -H 'Content-Type: application/json' -d '{"model":"mock","keepAlive":"-1"}' >/tmp/ollama-lifecycle-response.json & lifecycle_pid=$!
+sleep .1
+test "$(curl -sS -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:11437/models/lifecycle -H 'Content-Type: application/json' -d '{"model":"mock","keepAlive":"-1"}')" = 409
+wait "$lifecycle_pid"
+grep -q 'applied' /tmp/ollama-lifecycle-response.json
+curl -fsS http://127.0.0.1:11437/stats | python3 -c 'import json,sys; m=next(m for m in json.load(sys.stdin)["loadedModels"] if m["name"]=="mock"); assert m["expiresAt"].startswith("9999-")'
 echo "integration test passed"

@@ -66,6 +66,12 @@
 
       <section class="panel tokens">
         <span class="title">tokens</span>
+        <div class="history-controls">
+          <input id="requestSearch" type="search" placeholder="filter model, endpoint, or label" aria-label="Filter LLM history" />
+          <select id="requestState" aria-label="Filter LLM history by state">
+            <option value="">all states</option><option value="active">active</option><option value="done">done</option><option value="cancelled">cancelled</option><option value="error">error</option>
+          </select>
+        </div>
         <div class="summary">
           <span>
             <b class="value pink" id="out">0</b>
@@ -115,6 +121,12 @@
 
       <section class="panel web-tools">
         <span class="title">web tool resources</span>
+        <div class="history-controls">
+          <input id="webSearch" type="search" placeholder="filter resource, host, tool, or caller" aria-label="Filter web tool history" />
+          <select id="webState" aria-label="Filter web tool history by state">
+            <option value="">all states</option><option value="done">done</option><option value="error">error</option>
+          </select>
+        </div>
         <div class="summary web-summary">
           <span><b class="value" id="webTotal">0</b> calls</span>
           <span><b class="value" id="webSearches">0</b> searches</span>
@@ -173,6 +185,7 @@
                 <th>quant</th>
                 <th class="num">ctx</th>
                 <th class="num">expires</th>
+                <th>controls</th>
               </tr>
             </thead>
             <tbody id="modelRows"></tbody>
@@ -195,6 +208,8 @@
                 <th class="num">cpu avg</th>
                 <th class="num">gpu avg</th>
                 <th class="num">ram avg</th>
+                <th class="num">speed Δ</th>
+                <th class="num">TTFT Δ</th>
               </tr>
             </thead>
             <tbody id="benchmarkRows"></tbody>

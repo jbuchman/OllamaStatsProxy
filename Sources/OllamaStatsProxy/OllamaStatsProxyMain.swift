@@ -32,6 +32,7 @@ enum OllamaStatsProxyMain {
         )
         let metrics = MetricRecorder(store: store)
         let activeRequests = ActiveRequestRegistry()
+        let modelLifecycle = ModelLifecycleRegistry()
         let ollama = OllamaClient(httpClient: client, upstream: options.upstream)
         let webToolMonitor = WebToolMonitor(store: store)
         let webTools = WebTools(
@@ -57,11 +58,16 @@ enum OllamaStatsProxyMain {
             async let machine = SystemCollector.collect()
             let (ollamaStatus, collected) = await (status, machine)
             let webToolStats = try await webToolMonitor.snapshot()
+            var loadedModels = ollamaStatus.models
+            for index in loadedModels.indices {
+                loadedModels[index].keepAlive = await modelLifecycle.keepAlive(for: loadedModels[index].name)
+            }
             let payload = StatsResponse(
                 generatedAt: Date(), uptimeSeconds: uptime,
                 ollamaReachable: ollamaStatus.reachable, ollamaVersion: ollamaStatus.version,
                 tokens: tokens, recentRequests: requests, webTools: webToolStats,
-                system: collected.0, gpu: collected.1, loadedModels: ollamaStatus.models
+                system: collected.0, gpu: collected.1, loadedModels: loadedModels,
+                installedModels: ollamaStatus.installedModels
             )
             return try APIResponses.json(payload)
         }
@@ -102,12 +108,29 @@ enum OllamaStatsProxyMain {
         router.get("/requests") { request, _ in
             let page = request.uri.queryParameters.get("page", as: Int.self) ?? 1
             let pageSize = request.uri.queryParameters.get("pageSize", as: Int.self) ?? 10
-            return try APIResponses.json(await store.requestPage(page: page, pageSize: pageSize))
+            return try APIResponses.json(await store.requestPage(
+                page: page, pageSize: pageSize,
+                query: request.uri.queryParameters.get("q"),
+                state: request.uri.queryParameters.get("state")
+            ))
+        }
+        router.get("/requests/:id") { _, context in
+            guard let id = context.parameters.get("id", as: Int64.self) else {
+                return try APIResponses.json(["error": "invalid request id"], status: .badRequest)
+            }
+            guard let detail = try await store.requestDetail(id: id) else {
+                return try APIResponses.json(["error": "request not found"], status: .notFound)
+            }
+            return try APIResponses.json(detail)
         }
         router.get("/web-tools/page") { request, _ in
             let page = request.uri.queryParameters.get("page", as: Int.self) ?? 1
             let pageSize = request.uri.queryParameters.get("pageSize", as: Int.self) ?? 10
-            return try APIResponses.json(await store.webToolPage(page: page, pageSize: pageSize))
+            return try APIResponses.json(await store.webToolPage(
+                page: page, pageSize: pageSize,
+                query: request.uri.queryParameters.get("q"),
+                state: request.uri.queryParameters.get("state")
+            ))
         }
         router.get("/web-tools") { _, _ in try APIResponses.json(await store.allWebToolCalls()) }
         router.get("/admin/session") { request, _ in
@@ -180,6 +203,32 @@ enum OllamaStatsProxyMain {
                 )
             case .notActive:
                 return try APIResponses.json(["error": "request is not active"], status: .notFound)
+            }
+        }
+        router.post("/models/lifecycle") { request, _ in
+            guard await adminAuthentication.isAuthenticated(headers: request.headers) else {
+                return try APIResponses.json(["error": "authentication required"], status: .unauthorized)
+            }
+            let body = try await request.body.collect(upTo: 64 * 1024)
+            let action = try JSONDecoder().decode(ModelLifecycleRequest.self, from: Data(body.readableBytesView))
+            guard !action.model.isEmpty, ["0", "5m", "-1"].contains(action.keepAlive) else {
+                return try APIResponses.json(["error": "keepAlive must be 0, 5m, or -1"], status: .badRequest)
+            }
+            guard await modelLifecycle.begin(model: action.model) else {
+                return try APIResponses.json(
+                    ["error": "a lifecycle operation is already running for this model"],
+                    status: .conflict
+                )
+            }
+            do {
+                try await ollama.setKeepAlive(model: action.model, keepAlive: action.keepAlive)
+                await modelLifecycle.finish(model: action.model, appliedKeepAlive: action.keepAlive)
+                return try APIResponses.json(ModelLifecycleResponse(
+                    model: action.model, keepAlive: action.keepAlive, status: "applied"
+                ))
+            } catch {
+                await modelLifecycle.finish(model: action.model)
+                return try APIResponses.json(["error": "Ollama lifecycle request failed: \(error)"], status: .badGateway)
             }
         }
 

@@ -107,6 +107,8 @@ struct BenchmarkSummary: Codable, Sendable, FetchableRecord {
     var averageCPUPercent: Double?
     var averageGPUPercent: Double?
     var averageMemoryUsedBytes: Double?
+    var outputTokensPerSecondDeltaPercent: Double?
+    var timeToFirstTokenDeltaPercent: Double?
 }
 
 struct TokenSummary: Codable, Sendable {
@@ -149,6 +151,30 @@ struct LoadedModel: Codable, Sendable {
     var contextLength: Int?
     var quantization: String?
     var expiresAt: String?
+    var keepAlive: String?
+}
+
+struct InstalledModel: Codable, Sendable {
+    var name: String
+    var size: Int64
+    var parameterSize: String?
+    var quantization: String?
+}
+
+struct RequestDetail: Codable, Sendable {
+    var request: RequestSnapshot
+    var webTools: [WebToolActivity]
+}
+
+struct ModelLifecycleRequest: Codable, Sendable {
+    var model: String
+    var keepAlive: String
+}
+
+struct ModelLifecycleResponse: Codable, Sendable {
+    var model: String
+    var keepAlive: String
+    var status: String
 }
 
 struct StatsResponse: Codable, Sendable {
@@ -162,6 +188,7 @@ struct StatsResponse: Codable, Sendable {
     var system: SystemStats
     var gpu: GPUStats
     var loadedModels: [LoadedModel]
+    var installedModels: [InstalledModel]
 }
 
 struct VersionResponse: Codable, Sendable {

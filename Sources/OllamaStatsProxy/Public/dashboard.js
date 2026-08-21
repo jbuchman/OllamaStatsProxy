@@ -9,6 +9,12 @@ let requestPage = 1;
 let requestTotalPages = 1;
 let webPage = 1;
 let webTotalPages = 1;
+let expandedRequestID = null;
+let filterTimer = null;
+let refreshSequence = 0;
+const modelActionsInProgress = new Map();
+const modelActionNotices = new Map();
+let interactionUntil = 0;
 
 const bytes = (n) => {
   if (n == null) return "–";
@@ -53,13 +59,31 @@ const bar = (label, value) => {
   `;
 };
 
+const modelProgressHTML = (pending) => `<div class="model-progress" role="status" aria-live="polite">
+  <span class="activity-spinner" aria-hidden="true"></span>
+  ${escapeHTML(pending.label)} · ${Math.max(0, Math.floor((Date.now() - pending.startedAt) / 1000))}s
+</div>`;
+
+function updateTableHTML(id, html) {
+  const element = $(id);
+  if (Date.now() < interactionUntil || element.innerHTML === html) return;
+  element.innerHTML = html;
+}
+
 async function refresh() {
+  const sequence = ++refreshSequence;
   try {
+    const requestParameters = new URLSearchParams({ page: requestPage, pageSize: historyPageSize });
+    const webParameters = new URLSearchParams({ page: webPage, pageSize: historyPageSize });
+    if ($("requestSearch").value) requestParameters.set("q", $("requestSearch").value);
+    if ($("requestState").value) requestParameters.set("state", $("requestState").value);
+    if ($("webSearch").value) webParameters.set("q", $("webSearch").value);
+    if ($("webState").value) webParameters.set("state", $("webState").value);
     const [response, benchmarkResponse, requestPageResponse, webPageResponse] = await Promise.all([
       fetch("/stats", { cache: "no-store" }),
       fetch("/benchmarks", { cache: "no-store" }),
-      fetch(`/requests?page=${requestPage}&pageSize=${historyPageSize}`, { cache: "no-store" }),
-      fetch(`/web-tools/page?page=${webPage}&pageSize=${historyPageSize}`, { cache: "no-store" }),
+      fetch(`/requests?${requestParameters}`, { cache: "no-store" }),
+      fetch(`/web-tools/page?${webParameters}`, { cache: "no-store" }),
     ]);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     if (!requestPageResponse.ok || !webPageResponse.ok) throw new Error("Unable to load history pages");
@@ -70,6 +94,7 @@ async function refresh() {
       : [];
     const requests = await requestPageResponse.json();
     const webTools = await webPageResponse.json();
+    if (sequence !== refreshSequence) return;
     requestPage = requests.page;
     requestTotalPages = requests.totalPages;
     webPage = webTools.page;
@@ -94,7 +119,7 @@ async function refresh() {
     $("webSearches").textContent = nf.format(web.searchRequests);
     $("webFetches").textContent = nf.format(web.fetchRequests);
     $("webBytes").textContent = bytes(web.responseBytes);
-    $("webToolRows").innerHTML = webTools.items.map((r) => `
+    updateTableHTML("webToolRows", webTools.items.map((r) => `
       <tr>
         ${cell("time", new Date(r.startedAt).toLocaleTimeString(), "dim")}
         ${cell("caller", escapeHTML(r.source))}
@@ -104,7 +129,7 @@ async function refresh() {
         ${cell("time", r.durationSeconds.toFixed(2) + "s", "num")}
         ${cell("state", escapeHTML(r.state), `state ${r.state}`)}
       </tr>`).join("") ||
-      `<tr>${cell("", "no web tool resources requested yet", "dim wide")}</tr>`;
+      `<tr>${cell("", "no web tool resources requested yet", "dim wide")}</tr>`);
     updatePagination("web", webPage, webTotalPages, webTools.totalItems);
 
     historyData.push(data.tokens.liveTokensPerSecond);
@@ -117,11 +142,11 @@ async function refresh() {
       )
       .join("");
 
-    $("requestRows").innerHTML =
+    updateTableHTML("requestRows",
       requests.items
         .map(
           (r) => `
-        <tr>
+        <tr class="history-row" data-request-id="${r.id}" title="Show request timing details">
           ${cell("#", r.id, "dim")}
           ${cell("model", escapeHTML(r.model), "wide")}
           ${cell("endpoint", escapeHTML(r.endpoint), "wide")}
@@ -139,8 +164,11 @@ async function refresh() {
         </tr>`
         )
         .join("") ||
-      `<tr>${cell("", "no requests through proxy yet", "dim wide")}</tr>`;
+      `<tr>${cell("", "no requests through proxy yet", "dim wide")}</tr>`);
     updatePagination("request", requestPage, requestTotalPages, requests.totalItems);
+    if (expandedRequestID != null && requests.items.some((request) => request.id === expandedRequestID)) {
+      await loadRequestDetail(expandedRequestID);
+    }
 
     $("system").innerHTML =
       bar("cpu total", data.system.cpuPercent) +
@@ -151,7 +179,7 @@ async function refresh() {
         ${bytes(data.system.memoryTotalBytes)}
       </div>`;
 
-    $("processRows").innerHTML =
+    updateTableHTML("processRows",
       data.system.ollamaProcesses
         .map(
           (p) => `
@@ -164,7 +192,7 @@ async function refresh() {
         </tr>`
         )
         .join("") ||
-      `<tr>${cell("", "no ollama processes found", "dim wide")}</tr>`;
+      `<tr>${cell("", "no ollama processes found", "dim wide")}</tr>`);
 
     const g = data.gpu;
     $("gpu").innerHTML =
@@ -177,33 +205,47 @@ async function refresh() {
         unified memory – shared with system ram
       </div>`;
 
-    $("modelRows").innerHTML =
-      data.loadedModels
-        .map(
-          (m) => `
-        <tr>
+    const installedModels = data.installedModels?.length
+      ? data.installedModels
+      : data.loadedModels.map((model) => ({
+          name: model.name, size: model.size, parameterSize: null, quantization: model.quantization,
+        }));
+    updateTableHTML("modelRows",
+      installedModels
+        .map((m) => {
+          const loaded = data.loadedModels.find((candidate) => candidate.name === m.name);
+          const indefinitelyLoaded = loaded?.keepAlive === "-1"
+            || (loaded?.expiresAt && new Date(loaded.expiresAt).getUTCFullYear() >= 9000);
+          const pending = modelActionsInProgress.get(m.name);
+          const notice = modelActionNotices.get(m.name);
+          if (notice && notice.until <= Date.now()) modelActionNotices.delete(m.name);
+          const controls = pending
+            ? modelProgressHTML(pending)
+            : loaded
+            ? `<div class="model-controls">
+                <button class="secondary-button model-action" data-model="${escapeHTML(m.name)}" data-keep-alive="5m">expire 5m</button>
+                <button class="secondary-button model-action" data-model="${escapeHTML(m.name)}" data-keep-alive="-1" ${indefinitelyLoaded ? "disabled" : ""}>${indefinitelyLoaded ? "kept loaded" : "keep loaded"}</button>
+                <button class="stop-button model-action" data-model="${escapeHTML(m.name)}" data-keep-alive="0">unload</button>
+                ${notice && notice.until > Date.now() ? `<span class="action-success" role="status">${escapeHTML(notice.message)}</span>` : ""}
+              </div>`
+            : `<button class="secondary-button model-action" data-model="${escapeHTML(m.name)}" data-keep-alive="-1">preload</button>`;
+          return `<tr>
           ${cell("model", `<b>${escapeHTML(m.name)}</b>`, "wide")}
           ${cell("size", bytes(m.size), "num")}
-          ${cell("vram", bytes(m.sizeVRAM), "num")}
-          ${cell(
-            "placement",
-            `<span style="color:${
-              m.gpuPercent >= 100 ? "var(--green)" : "var(--yellow)"
-            }">${m.gpuPercent ? m.gpuPercent + "% GPU" : "100% CPU"}</span>`
-          )}
-          ${cell("quant", escapeHTML(m.quantization ?? "–"))}
-          ${cell("ctx", m.contextLength ?? "–", "num")}
-          ${cell(
-            "expires",
-            m.expiresAt ? new Date(m.expiresAt).toLocaleTimeString() : "–",
-            "num dim"
-          )}
-        </tr>`
-        )
+          ${cell("vram", loaded ? bytes(loaded.sizeVRAM) : "–", "num")}
+          ${cell("placement", loaded
+            ? `<span style="color:${loaded.gpuPercent >= 100 ? "var(--green)" : "var(--yellow)"}">${loaded.gpuPercent ? loaded.gpuPercent + "% GPU" : "100% CPU"}</span>`
+            : `<span class="dim">unloaded</span>`)}
+          ${cell("quant", escapeHTML(m.quantization ?? loaded?.quantization ?? "–"))}
+          ${cell("ctx", loaded?.contextLength ?? "–", "num")}
+          ${cell("expires", loaded?.expiresAt ? new Date(loaded.expiresAt).toLocaleTimeString() : "–", "num dim")}
+          ${cell("controls", controls, "wide")}
+        </tr>`;
+        })
         .join("") ||
-      `<tr>${cell("", "no models loaded", "dim wide")}</tr>`;
+      `<tr>${cell("", "no models loaded", "dim wide")}</tr>`);
 
-    $("benchmarkRows").innerHTML =
+    updateTableHTML("benchmarkRows",
       benchmarks
         .map(
           (b) => `
@@ -227,14 +269,114 @@ async function refresh() {
           ${cell("cpu avg", b.averageCPUPercent != null ? b.averageCPUPercent.toFixed(1) + "%" : "–", "num")}
           ${cell("gpu avg", b.averageGPUPercent != null ? b.averageGPUPercent.toFixed(1) + "%" : "–", "num")}
           ${cell("ram avg", bytes(b.averageMemoryUsedBytes), "num")}
+          ${cell("speed Δ", deltaBadge(b.outputTokensPerSecondDeltaPercent, false), "num")}
+          ${cell("TTFT Δ", deltaBadge(b.timeToFirstTokenDeltaPercent, true), "num")}
         </tr>`
         )
         .join("") ||
-      `<tr>${cell("", "no completed benchmarks yet", "dim wide")}</tr>`;
+      `<tr>${cell("", "no completed benchmarks yet", "dim wide")}</tr>`);
   } catch (error) {
+    if (sequence !== refreshSequence) return;
     $("connection").className = "bad";
     $("connection").textContent = "● monitor disconnected";
     console.error("Unable to refresh monitor:", error);
+  }
+}
+
+function deltaBadge(value, higherIsWorse) {
+  if (value == null || !Number.isFinite(value)) return `<span class="delta neutral">–</span>`;
+  const regression = higherIsWorse ? value > 5 : value < -5;
+  const improvement = higherIsWorse ? value < -5 : value > 5;
+  const className = regression ? "bad" : improvement ? "good" : "neutral";
+  const sign = value > 0 ? "+" : "";
+  return `<span class="delta ${className}">${sign}${value.toFixed(1)}%</span>`;
+}
+
+function timelineRow(label, start, duration, total, className = "") {
+  const safeTotal = Math.max(total, 0.001);
+  const left = Math.max(0, Math.min(100, start / safeTotal * 100));
+  const width = Math.max(0.5, Math.min(100 - left, duration / safeTotal * 100));
+  return `<div class="timeline-row">
+    <span>${escapeHTML(label)}</span>
+    <span class="timeline-track"><i class="timeline-segment ${className}" style="left:${left}%;width:${width}%"></i></span>
+    <span class="num">${duration.toFixed(2)}s</span>
+  </div>`;
+}
+
+async function loadRequestDetail(requestID) {
+  const sourceRow = $(`requestRows`).querySelector(`tr[data-request-id="${requestID}"]`);
+  if (!sourceRow) return;
+  try {
+    const response = await fetch(`/requests/${requestID}`, { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const detail = await response.json();
+    const request = detail.request;
+    const total = Math.max(request.elapsedSeconds, request.totalDurationSeconds ?? 0, 0.001);
+    const load = Math.min(request.loadDurationSeconds ?? 0, total);
+    const prompt = request.promptTokensPerSecond > 0 ? request.promptTokens / request.promptTokensPerSecond : 0;
+    const generation = request.tokensPerSecond > 0 ? request.outputTokens / request.tokensPerSecond : Math.max(0, total - load - prompt);
+    const requestStart = new Date(request.startedAt).getTime();
+    const timeline = [
+      load > 0 ? timelineRow("model load", 0, load, total) : "",
+      prompt > 0 ? timelineRow("prompt eval", load, prompt, total) : "",
+      generation > 0 ? timelineRow("generation", load + prompt, generation, total, "generation") : "",
+      ...detail.webTools.map((tool) => timelineRow(
+        `${tool.tool}: ${tool.host ?? tool.resource}`,
+        Math.max(0, (new Date(tool.startedAt).getTime() - requestStart) / 1000),
+        tool.durationSeconds,
+        total,
+        "tool"
+      )),
+    ].join("");
+    const existing = sourceRow.nextElementSibling;
+    if (existing?.classList.contains("detail-row")) existing.remove();
+    sourceRow.insertAdjacentHTML("afterend", `<tr class="detail-row"><td colspan="12">
+      <div class="request-detail">
+        <div class="detail-meta">
+          <span>started ${new Date(request.startedAt).toLocaleString()}</span>
+          <span>label ${escapeHTML(request.benchmarkLabel ?? "–")}</span>
+          <span>temperature ${request.temperature ?? "–"}</span>
+          <span>context ${request.contextLength ?? "–"}</span>
+          <span>samples ${request.resourceSampleCount}</span>
+          <span>${detail.webTools.length} linked tool call${detail.webTools.length === 1 ? "" : "s"}</span>
+        </div>
+        <div class="timeline">${timeline || `<span class="dim">Timing phases are not available for this request.</span>`}</div>
+      </div>
+    </td></tr>`);
+  } catch (error) {
+    console.error(`Unable to load request #${requestID}:`, error);
+  }
+}
+
+async function applyModelLifecycle(model, keepAlive, button) {
+  if (!adminAuthenticated) {
+    if (adminPasswordConfigured) $("adminLoginDialog").showModal();
+    return;
+  }
+  if (modelActionsInProgress.has(model)) return;
+  const label = keepAlive === "0" ? "unloading" : keepAlive === "5m" ? "setting expiration" : "loading model";
+  const pending = { label, startedAt: Date.now() };
+  modelActionsInProgress.set(model, pending);
+  const currentControls = button.closest(".model-controls") ?? button;
+  currentControls.outerHTML = modelProgressHTML(pending);
+  refresh();
+  try {
+    const response = await fetch("/models/lifecycle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model, keepAlive }),
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error ?? `HTTP ${response.status}`);
+    }
+    const message = keepAlive === "0" ? "unloaded" : keepAlive === "5m" ? "expiration set" : "kept loaded";
+    modelActionNotices.set(model, { message, until: Date.now() + 5000 });
+  } catch (error) {
+    window.alert(`Unable to update ${model}: ${error.message}`);
+  } finally {
+    modelActionsInProgress.delete(model);
+    await refresh();
   }
 }
 
@@ -425,8 +567,39 @@ $("settingsForm").addEventListener("submit", saveConfiguration);
 $("clearStats").addEventListener("click", clearStats);
 $("requestRows").addEventListener("click", (event) => {
   const button = event.target.closest(".stop-button");
-  if (button) cancelRequest(Number(button.dataset.requestId), button);
+  if (button) {
+    cancelRequest(Number(button.dataset.requestId), button);
+    return;
+  }
+  const row = event.target.closest(".history-row");
+  if (!row) return;
+  const requestID = Number(row.dataset.requestId);
+  if (expandedRequestID === requestID) {
+    expandedRequestID = null;
+    if (row.nextElementSibling?.classList.contains("detail-row")) row.nextElementSibling.remove();
+  } else {
+    expandedRequestID = requestID;
+    loadRequestDetail(requestID);
+  }
 });
+document.addEventListener("pointerdown", () => { interactionUntil = Date.now() + 1000; }, true);
+$("modelRows").addEventListener("click", (event) => {
+  const button = event.target.closest(".model-action");
+  if (button) applyModelLifecycle(button.dataset.model, button.dataset.keepAlive, button);
+});
+const filtersChanged = () => {
+  window.clearTimeout(filterTimer);
+  filterTimer = window.setTimeout(() => {
+    requestPage = 1;
+    webPage = 1;
+    expandedRequestID = null;
+    refresh();
+  }, 250);
+};
+$("requestSearch").addEventListener("input", filtersChanged);
+$("requestState").addEventListener("change", filtersChanged);
+$("webSearch").addEventListener("input", filtersChanged);
+$("webState").addEventListener("change", filtersChanged);
 $("requestPrevious").addEventListener("click", () => { requestPage = Math.max(1, requestPage - 1); refresh(); });
 $("requestNext").addEventListener("click", () => { requestPage = Math.min(requestTotalPages, requestPage + 1); refresh(); });
 $("webPrevious").addEventListener("click", () => { webPage = Math.max(1, webPage - 1); refresh(); });

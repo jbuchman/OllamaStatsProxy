@@ -54,3 +54,23 @@ struct CancelRequestResponse: Codable, Sendable {
     var requestID: Int64
     var status: String
 }
+
+actor ModelLifecycleRegistry {
+    private var activeModels: Set<String> = []
+    private var policies: [String: String] = [:]
+
+    func begin(model: String) -> Bool {
+        activeModels.insert(model).inserted
+    }
+
+    func finish(model: String, appliedKeepAlive: String? = nil) {
+        activeModels.remove(model)
+        if appliedKeepAlive == "0" {
+            policies.removeValue(forKey: model)
+        } else if let appliedKeepAlive {
+            policies[model] = appliedKeepAlive
+        }
+    }
+
+    func keepAlive(for model: String) -> String? { policies[model] }
+}

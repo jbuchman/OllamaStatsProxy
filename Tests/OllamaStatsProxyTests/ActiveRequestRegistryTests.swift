@@ -24,3 +24,12 @@ private final class CancellationMarker: @unchecked Sendable {
     var value: Bool { lock.withLock { marked } }
     func mark() { lock.withLock { marked = true } }
 }
+
+@Test func modelLifecycleRegistryPreventsOverlappingOperations() async {
+    let registry = ModelLifecycleRegistry()
+    #expect(await registry.begin(model: "test-model"))
+    #expect(!(await registry.begin(model: "test-model")))
+    #expect(await registry.begin(model: "another-model"))
+    await registry.finish(model: "test-model")
+    #expect(await registry.begin(model: "test-model"))
+}

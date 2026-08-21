@@ -13,6 +13,9 @@ It streams Ollama responses to clients before asynchronously accounting for them
 - Temperature, context length, and thinking-mode capture.
 - Per-query average system CPU, Apple Silicon GPU, and used-memory capture with benchmark aggregates.
 - CPU, RAM, process/thread, Apple Silicon GPU, VRAM, and loaded-model panels.
+- Expandable request timing waterfalls with linked web-tool activity.
+- Searchable completion/tool histories and latest-run regression indicators.
+- Authenticated model preload, keep-alive, expiration, and unload controls.
 - Persistent SQLite history with JSON/CSV exports and retention controls.
 - Responsive desktop, iPad, and phone dashboard.
 - Live web-tool resource activity: LLM/direct caller, search queries, fetched URLs, latency, result counts, received bytes, and failures (metadata only; page contents are not retained).
@@ -62,8 +65,10 @@ Override inputs with `BENCHMARK_LABEL`, `BENCHMARK_PROMPT`, and `OLLAMA_PROXY_UR
 | `GET /version` | Proxy name and semantic version |
 | `GET /benchmarks` | Historical aggregates grouped by model |
 | `GET /requests?page=1&pageSize=10` | Paginated completion history |
+| `GET /requests/:id` | Completion timing details and linked tool calls |
 | `GET /web-tools/page?page=1&pageSize=10` | Paginated web-tool history |
 | `POST /requests/:id/cancel` | Authenticated cancellation of an active completion |
+| `POST /models/lifecycle` | Authenticated model preload/expiration/unload control |
 | `GET /web-tools` | Persistent web-tool call history, linked to LLM requests |
 | `GET /export.json` | Complete request history as JSON |
 | `GET /export.csv` | Complete history as downloadable CSV |

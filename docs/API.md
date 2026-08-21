@@ -34,7 +34,9 @@ Returns completed, successful requests grouped by model:
 
 ## Paginated histories
 
-`GET /requests?page=1&pageSize=10` returns completion history newest-first. `GET /web-tools/page?page=1&pageSize=10` returns web-tool history newest-first. Both responses contain `items`, `page`, `pageSize`, `totalItems`, and `totalPages`. Page numbers start at 1, and `pageSize` is clamped to 1–100.
+`GET /requests?page=1&pageSize=10&q=llama&state=done` returns completion history newest-first. The optional query searches model, endpoint, and benchmark label; state can be `active`, `done`, `cancelled`, or `error`. `GET /web-tools/page?page=1&pageSize=10&q=example.com&state=done` searches resource, host, tool, and caller; its states are `done` and `error`. Both responses contain `items`, `page`, `pageSize`, `totalItems`, and `totalPages`. Page numbers start at 1, and `pageSize` is clamped to 1–100.
+
+`GET /requests/:id` returns one completion with its timing metrics and chronologically linked web-tool calls. The dashboard uses this to render an expandable timing waterfall without retaining prompt or response content.
 
 The unpaginated `GET /web-tools` endpoint remains available for exports and compatibility.
 
@@ -45,6 +47,12 @@ The unpaginated `GET /web-tools` endpoint remains available for exports and comp
 ## Cancelling active requests
 
 Authenticated `POST /requests/:id/cancel` cancels an active upstream generation or server-owned tool orchestration task. Successful requests return `202` with `{"requestID":123,"status":"cancelling"}`; a repeated cancellation returns `409`, and a finished or unknown request returns `404`. The completion is retained with state `cancelled` and error `cancelled by administrator`.
+
+## Model lifecycle
+
+Authenticated `POST /models/lifecycle` accepts `{"model":"llama3.2","keepAlive":"-1"}`. Supported values are `-1` to preload and keep a model resident, `5m` to set a five-minute expiration, and `0` to unload it. The dashboard obtains installed models from Ollama's tags endpoint and loaded state from its process endpoint.
+
+Only one lifecycle operation per model can run at a time; overlapping requests return `409`. The dashboard keeps an indeterminate progress indicator and elapsed time visible across its automatic refreshes until Ollama finishes or returns an error.
 
 ## `GET /web-tools`
 

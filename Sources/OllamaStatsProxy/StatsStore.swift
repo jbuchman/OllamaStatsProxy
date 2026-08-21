@@ -224,13 +224,31 @@ actor StatsStore {
         return (summary, Array(merged), now.timeIntervalSince(sessionStart))
     }
 
-    func requestPage(page requestedPage: Int, pageSize requestedPageSize: Int) throws -> PaginatedResponse<RequestSnapshot> {
+    func requestPage(
+        page requestedPage: Int, pageSize requestedPageSize: Int,
+        query search: String? = nil, state: String? = nil
+    ) throws -> PaginatedResponse<RequestSnapshot> {
         let pageSize = min(max(requestedPageSize, 1), 100)
-        let total = try database.read { db in try RequestRecord.fetchCount(db) }
+        var request = RequestRecord.all()
+        if let search = search?.trimmingCharacters(in: .whitespacesAndNewlines), !search.isEmpty {
+            let pattern = "%\(search)%"
+            request = request.filter(
+                Column("model").like(pattern) || Column("endpoint").like(pattern)
+                    || Column("benchmarkLabel").like(pattern)
+            )
+        }
+        switch state {
+        case "active": request = request.filter(sql: "endedAt IS NULL")
+        case "done": request = request.filter(sql: "endedAt IS NOT NULL AND error IS NULL")
+        case "cancelled": request = request.filter(Column("error") == ActiveRequestRegistry.cancellationReason)
+        case "error": request = request.filter(sql: "error IS NOT NULL AND error <> ?", arguments: [ActiveRequestRegistry.cancellationReason])
+        default: break
+        }
+        let total = try database.read { db in try request.fetchCount(db) }
         let totalPages = max(1, (total + pageSize - 1) / pageSize)
         let page = min(max(requestedPage, 1), totalPages)
         let records = try database.read { db in
-            try RequestRecord.order(Column("id").desc)
+            try request.order(Column("id").desc)
                 .limit(pageSize, offset: (page - 1) * pageSize).fetchAll(db)
         }
         let now = Date()
@@ -239,6 +257,18 @@ actor StatsStore {
                 requestSnapshot(active[record.id ?? -1] ?? record, now: now)
             },
             page: page, pageSize: pageSize, totalItems: total, totalPages: totalPages
+        )
+    }
+
+    func requestDetail(id: Int64) throws -> RequestDetail? {
+        guard let stored = try database.read({ db in try RequestRecord.fetchOne(db, key: id) }) else { return nil }
+        let record = active[id] ?? stored
+        let tools = try database.read { db in
+            try WebToolRecord.filter(Column("requestID") == id).order(Column("startedAt").asc).fetchAll(db)
+        }
+        return RequestDetail(
+            request: requestSnapshot(record, now: Date()),
+            webTools: tools.map(webToolActivity)
         )
     }
 
@@ -273,7 +303,7 @@ actor StatsStore {
 
     func benchmarkSummaries() throws -> [BenchmarkSummary] {
         try database.read { db in
-            try BenchmarkSummary.fetchAll(db, sql: """
+            var summaries = try BenchmarkSummary.fetchAll(db, sql: """
                 SELECT model, COUNT(*) AS runs,
                   AVG(CASE WHEN evalDurationNanoseconds > 0 THEN outputTokens * 1000000000.0 / evalDurationNanoseconds ELSE outputTokens / MAX((julianday(endedAt)-julianday(startedAt))*86400.0, 0.001) END) AS averageOutputTokensPerSecond,
                   AVG(CASE WHEN promptEvalDurationNanoseconds > 0 THEN promptTokens * 1000000000.0 / promptEvalDurationNanoseconds END) AS averagePromptTokensPerSecond,
@@ -281,9 +311,28 @@ actor StatsStore {
                   AVG(COALESCE(totalDurationNanoseconds / 1000000000.0, (julianday(endedAt)-julianday(startedAt))*86400.0)) AS averageTotalDurationSeconds,
                   AVG(averageCPUPercent) AS averageCPUPercent,
                   AVG(averageGPUPercent) AS averageGPUPercent,
-                  AVG(averageMemoryUsedBytes) AS averageMemoryUsedBytes
+                  AVG(averageMemoryUsedBytes) AS averageMemoryUsedBytes,
+                  NULL AS outputTokensPerSecondDeltaPercent,
+                  NULL AS timeToFirstTokenDeltaPercent
                 FROM requests WHERE endedAt IS NOT NULL AND error IS NULL GROUP BY model ORDER BY averageOutputTokensPerSecond DESC
                 """)
+            for index in summaries.indices {
+                let recent = try RequestRecord
+                    .filter(Column("model") == summaries[index].model)
+                    .filter(sql: "endedAt IS NOT NULL AND error IS NULL")
+                    .order(Column("id").desc).limit(2).fetchAll(db)
+                guard recent.count == 2 else { continue }
+                let latestTPS = recent[0].averageTokensPerSecond
+                let previousTPS = recent[1].averageTokensPerSecond
+                if previousTPS > 0 {
+                    summaries[index].outputTokensPerSecondDeltaPercent = (latestTPS - previousTPS) / previousTPS * 100
+                }
+                if let latestTTFT = recent[0].timeToFirstTokenSeconds,
+                   let previousTTFT = recent[1].timeToFirstTokenSeconds, previousTTFT > 0 {
+                    summaries[index].timeToFirstTokenDeltaPercent = (latestTTFT - previousTTFT) / previousTTFT * 100
+                }
+            }
+            return summaries
         }
     }
 
@@ -312,13 +361,29 @@ actor StatsStore {
         try database.read { db in try WebToolRecord.order(Column("id").asc).fetchAll(db) }
     }
 
-    func webToolPage(page requestedPage: Int, pageSize requestedPageSize: Int) throws -> PaginatedResponse<WebToolActivity> {
+    func webToolPage(
+        page requestedPage: Int, pageSize requestedPageSize: Int,
+        query search: String? = nil, state: String? = nil
+    ) throws -> PaginatedResponse<WebToolActivity> {
         let pageSize = min(max(requestedPageSize, 1), 100)
         return try database.read { db in
-            let total = try WebToolRecord.fetchCount(db)
+            var request = WebToolRecord.all()
+            if let search = search?.trimmingCharacters(in: .whitespacesAndNewlines), !search.isEmpty {
+                let pattern = "%\(search)%"
+                request = request.filter(
+                    Column("resource").like(pattern) || Column("host").like(pattern)
+                        || Column("tool").like(pattern) || Column("source").like(pattern)
+                )
+            }
+            switch state {
+            case "done": request = request.filter(Column("error") == nil)
+            case "error": request = request.filter(Column("error") != nil)
+            default: break
+            }
+            let total = try request.fetchCount(db)
             let totalPages = max(1, (total + pageSize - 1) / pageSize)
             let page = min(max(requestedPage, 1), totalPages)
-            let records = try WebToolRecord.order(Column("id").desc)
+            let records = try request.order(Column("id").desc)
                 .limit(pageSize, offset: (page - 1) * pageSize).fetchAll(db)
             return PaginatedResponse(
                 items: records.map(webToolActivity), page: page, pageSize: pageSize,
