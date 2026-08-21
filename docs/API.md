@@ -32,6 +32,12 @@ Returns completed, successful requests grouped by model:
 }]
 ```
 
+## Paginated histories
+
+`GET /requests?page=1&pageSize=10` returns completion history newest-first. `GET /web-tools/page?page=1&pageSize=10` returns web-tool history newest-first. Both responses contain `items`, `page`, `pageSize`, `totalItems`, and `totalPages`. Page numbers start at 1, and `pageSize` is clamped to 1–100.
+
+The unpaginated `GET /web-tools` endpoint remains available for exports and compatibility.
+
 ## Exports
 
 `GET /export.json` returns all stored request records. `GET /export.csv` returns equivalent spreadsheet-friendly data.

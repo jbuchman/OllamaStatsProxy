@@ -168,3 +168,11 @@ struct VersionResponse: Codable, Sendable {
     var name: String
     var version: String
 }
+
+struct PaginatedResponse<Item: Codable & Sendable>: Codable, Sendable {
+    var items: [Item]
+    var page: Int
+    var pageSize: Int
+    var totalItems: Int
+    var totalPages: Int
+}

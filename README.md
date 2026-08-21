@@ -61,6 +61,8 @@ Override inputs with `BENCHMARK_LABEL`, `BENCHMARK_PROMPT`, and `OLLAMA_PROXY_UR
 | `GET /healthz` | Ollama-aware health check |
 | `GET /version` | Proxy name and semantic version |
 | `GET /benchmarks` | Historical aggregates grouped by model |
+| `GET /requests?page=1&pageSize=10` | Paginated completion history |
+| `GET /web-tools/page?page=1&pageSize=10` | Paginated web-tool history |
 | `POST /requests/:id/cancel` | Authenticated cancellation of an active completion |
 | `GET /web-tools` | Persistent web-tool call history, linked to LLM requests |
 | `GET /export.json` | Complete request history as JSON |

@@ -17,6 +17,8 @@ curl -fsS -X PUT http://127.0.0.1:11437/config -H 'Content-Type: application/jso
 test "$(curl -sS -o /dev/null -w '%{http_code}' 'http://127.0.0.1:11437/tools/web/fetch?url=http://127.0.0.1:11436/api/version')" = 403
 curl -fsS -X PUT http://127.0.0.1:11437/config -H 'Content-Type: application/json' -d '{"webSearchProvider":null,"webSearchAPIKey":null,"clearWebSearchAPIKey":false,"webSearchURL":null,"webFetchMaxMB":8,"webFetchMaxCharacters":50000,"webFetchEnabled":true,"webFetchAllowPrivateNetworks":true,"serverToolsEnabled":true,"serverToolRounds":4,"adminPassword":null}' >/dev/null
 curl -fsS 'http://127.0.0.1:11437/tools/web/fetch?url=http://127.0.0.1:11436/api/version' | grep -q 'test'
+curl -fsS 'http://127.0.0.1:11437/tools/web/fetch?url=http://127.0.0.1:11436/api/version' >/dev/null
+curl -fsS 'http://127.0.0.1:11437/web-tools/page?page=2&pageSize=1' | python3 -c 'import json,sys; p=json.load(sys.stdin); assert p["page"]==2 and p["pageSize"]==1 and p["totalItems"]>=2 and p["totalPages"]>=2 and len(p["items"])==1'
 curl -fsS http://127.0.0.1:11437/api/generate -H 'Content-Type: application/json' -H 'X-Ollama-Benchmark-Label: integration' -d '{"model":"mock","prompt":"not stored","stream":true}' | grep -q '"done": true'
 sleep 1
 stats="$(curl -fsS http://127.0.0.1:11437/stats)"
@@ -36,4 +38,5 @@ curl -fsS -X POST "http://127.0.0.1:11437/requests/$slow_id/cancel" | grep -q 'c
 wait "$slow_curl_pid" || true
 sleep .2
 curl -fsS http://127.0.0.1:11437/stats | python3 -c 'import json,sys; r=next(r for r in json.load(sys.stdin)["recentRequests"] if r["model"]=="mock-slow"); assert r["state"]=="cancelled" and r["error"]=="cancelled by administrator"'
+curl -fsS 'http://127.0.0.1:11437/requests?page=2&pageSize=1' | python3 -c 'import json,sys; p=json.load(sys.stdin); assert p["page"]==2 and p["pageSize"]==1 and p["totalItems"]>=2 and p["totalPages"]>=2 and len(p["items"])==1'
 echo "integration test passed"

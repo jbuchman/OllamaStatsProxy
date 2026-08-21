@@ -99,6 +99,16 @@ enum OllamaStatsProxyMain {
             catch { return try APIResponses.json(["error": String(describing: error)]) }
         }
         router.get("/benchmarks") { _, _ in try APIResponses.json(await store.benchmarkSummaries()) }
+        router.get("/requests") { request, _ in
+            let page = request.uri.queryParameters.get("page", as: Int.self) ?? 1
+            let pageSize = request.uri.queryParameters.get("pageSize", as: Int.self) ?? 10
+            return try APIResponses.json(await store.requestPage(page: page, pageSize: pageSize))
+        }
+        router.get("/web-tools/page") { request, _ in
+            let page = request.uri.queryParameters.get("page", as: Int.self) ?? 1
+            let pageSize = request.uri.queryParameters.get("pageSize", as: Int.self) ?? 10
+            return try APIResponses.json(await store.webToolPage(page: page, pageSize: pageSize))
+        }
         router.get("/web-tools") { _, _ in try APIResponses.json(await store.allWebToolCalls()) }
         router.get("/admin/session") { request, _ in
             try APIResponses.json(AdminSessionResponse(

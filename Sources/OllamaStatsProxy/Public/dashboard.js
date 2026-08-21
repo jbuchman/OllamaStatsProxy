@@ -4,6 +4,11 @@ let historyData = [];
 let clearConfiguredAPIKey = false;
 let adminAuthenticated = false;
 let adminPasswordConfigured = false;
+const historyPageSize = 10;
+let requestPage = 1;
+let requestTotalPages = 1;
+let webPage = 1;
+let webTotalPages = 1;
 
 const bytes = (n) => {
   if (n == null) return "–";
@@ -50,16 +55,25 @@ const bar = (label, value) => {
 
 async function refresh() {
   try {
-    const [response, benchmarkResponse] = await Promise.all([
+    const [response, benchmarkResponse, requestPageResponse, webPageResponse] = await Promise.all([
       fetch("/stats", { cache: "no-store" }),
       fetch("/benchmarks", { cache: "no-store" }),
+      fetch(`/requests?page=${requestPage}&pageSize=${historyPageSize}`, { cache: "no-store" }),
+      fetch(`/web-tools/page?page=${webPage}&pageSize=${historyPageSize}`, { cache: "no-store" }),
     ]);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (!requestPageResponse.ok || !webPageResponse.ok) throw new Error("Unable to load history pages");
 
     const data = await response.json();
     const benchmarks = benchmarkResponse.ok
       ? await benchmarkResponse.json()
       : [];
+    const requests = await requestPageResponse.json();
+    const webTools = await webPageResponse.json();
+    requestPage = requests.page;
+    requestTotalPages = requests.totalPages;
+    webPage = webTools.page;
+    webTotalPages = webTools.totalPages;
 
     $("connection").className = data.ollamaReachable ? "status" : "bad";
     $("connection").textContent = data.ollamaReachable
@@ -80,7 +94,7 @@ async function refresh() {
     $("webSearches").textContent = nf.format(web.searchRequests);
     $("webFetches").textContent = nf.format(web.fetchRequests);
     $("webBytes").textContent = bytes(web.responseBytes);
-    $("webToolRows").innerHTML = web.recent.map((r) => `
+    $("webToolRows").innerHTML = webTools.items.map((r) => `
       <tr>
         ${cell("time", new Date(r.startedAt).toLocaleTimeString(), "dim")}
         ${cell("caller", escapeHTML(r.source))}
@@ -91,6 +105,7 @@ async function refresh() {
         ${cell("state", escapeHTML(r.state), `state ${r.state}`)}
       </tr>`).join("") ||
       `<tr>${cell("", "no web tool resources requested yet", "dim wide")}</tr>`;
+    updatePagination("web", webPage, webTotalPages, webTools.totalItems);
 
     historyData.push(data.tokens.liveTokensPerSecond);
     historyData = historyData.slice(-60);
@@ -103,7 +118,7 @@ async function refresh() {
       .join("");
 
     $("requestRows").innerHTML =
-      data.recentRequests
+      requests.items
         .map(
           (r) => `
         <tr>
@@ -125,6 +140,7 @@ async function refresh() {
         )
         .join("") ||
       `<tr>${cell("", "no requests through proxy yet", "dim wide")}</tr>`;
+    updatePagination("request", requestPage, requestTotalPages, requests.totalItems);
 
     $("system").innerHTML =
       bar("cpu total", data.system.cpuPercent) +
@@ -222,6 +238,12 @@ async function refresh() {
   }
 }
 
+function updatePagination(prefix, page, totalPages, totalItems) {
+  $(`${prefix}PageStatus`).textContent = `page ${page} of ${totalPages} · ${nf.format(totalItems)} items`;
+  $(`${prefix}Previous`).disabled = page <= 1;
+  $(`${prefix}Next`).disabled = page >= totalPages;
+}
+
 async function clearStats() {
   if (!adminAuthenticated) {
     if (adminPasswordConfigured) $("adminLoginDialog").showModal();
@@ -241,6 +263,8 @@ async function clearStats() {
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     historyData = [];
+    requestPage = 1;
+    webPage = 1;
     await refresh();
     button.textContent = "cleared";
     window.setTimeout(() => {
@@ -403,6 +427,10 @@ $("requestRows").addEventListener("click", (event) => {
   const button = event.target.closest(".stop-button");
   if (button) cancelRequest(Number(button.dataset.requestId), button);
 });
+$("requestPrevious").addEventListener("click", () => { requestPage = Math.max(1, requestPage - 1); refresh(); });
+$("requestNext").addEventListener("click", () => { requestPage = Math.min(requestTotalPages, requestPage + 1); refresh(); });
+$("webPrevious").addEventListener("click", () => { webPage = Math.max(1, webPage - 1); refresh(); });
+$("webNext").addEventListener("click", () => { webPage = Math.min(webTotalPages, webPage + 1); refresh(); });
 loadAdminSession().catch((error) => console.error("Unable to load admin session:", error));
 refresh();
 setInterval(refresh, 1000);

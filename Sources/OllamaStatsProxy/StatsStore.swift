@@ -211,34 +211,7 @@ actor StatsStore {
             return partial + Double(count) / 2.0
         }
         let merged = (activeRecords + completed.filter { !active.keys.contains($0.id ?? -1) })
-            .prefix(limit)
-            .map { record in
-                let liveCount = recentTokenTimes[record.id ?? -1, default: []].filter { now.timeIntervalSince($0) <= 2 }.count
-                let state: String
-                if record.error == ActiveRequestRegistry.cancellationReason { state = "cancelled" }
-                else if record.error != nil { state = "error" }
-                else if record.endedAt != nil { state = "done" }
-                else if record.outputTokens == 0 && record.elapsedSeconds > 2 { state = "thinking/loading" }
-                else { state = "generating" }
-                return RequestSnapshot(
-                    id: record.id!, model: record.model, endpoint: record.endpoint,
-                    startedAt: record.startedAt, endedAt: record.endedAt,
-                    promptTokens: record.promptTokens, outputTokens: record.outputTokens,
-                    elapsedSeconds: record.elapsedSeconds,
-                    tokensPerSecond: record.endedAt == nil ? Double(liveCount) / 2.0 : record.averageTokensPerSecond,
-                    timeToFirstTokenSeconds: record.timeToFirstTokenSeconds,
-                    promptTokensPerSecond: record.promptTokensPerSecond,
-                    totalDurationSeconds: record.totalDurationNanoseconds.map { Double($0) / 1_000_000_000 },
-                    loadDurationSeconds: record.loadDurationNanoseconds.map { Double($0) / 1_000_000_000 },
-                    temperature: record.temperature, contextLength: record.contextLength,
-                    thinkingEnabled: record.thinkingEnabled, benchmarkLabel: record.benchmarkLabel,
-                    resourceSampleCount: record.resourceSampleCount,
-                    averageCPUPercent: record.averageCPUPercent,
-                    averageGPUPercent: record.averageGPUPercent,
-                    averageMemoryUsedBytes: record.averageMemoryUsedBytes,
-                    state: state, error: record.error
-                )
-            }
+            .prefix(limit).map { requestSnapshot($0, now: now) }
         let totalOutput: Int = totals["output"]
         let totalPrompt: Int = totals["prompt"]
         let totalCount: Int = totals["count"]
@@ -249,6 +222,53 @@ actor StatsStore {
             liveTokensPerSecond: liveTPS
         )
         return (summary, Array(merged), now.timeIntervalSince(sessionStart))
+    }
+
+    func requestPage(page requestedPage: Int, pageSize requestedPageSize: Int) throws -> PaginatedResponse<RequestSnapshot> {
+        let pageSize = min(max(requestedPageSize, 1), 100)
+        let total = try database.read { db in try RequestRecord.fetchCount(db) }
+        let totalPages = max(1, (total + pageSize - 1) / pageSize)
+        let page = min(max(requestedPage, 1), totalPages)
+        let records = try database.read { db in
+            try RequestRecord.order(Column("id").desc)
+                .limit(pageSize, offset: (page - 1) * pageSize).fetchAll(db)
+        }
+        let now = Date()
+        return PaginatedResponse(
+            items: records.map { record in
+                requestSnapshot(active[record.id ?? -1] ?? record, now: now)
+            },
+            page: page, pageSize: pageSize, totalItems: total, totalPages: totalPages
+        )
+    }
+
+    private func requestSnapshot(_ record: RequestRecord, now: Date) -> RequestSnapshot {
+        let liveCount = recentTokenTimes[record.id ?? -1, default: []]
+            .filter { now.timeIntervalSince($0) <= 2 }.count
+        let state: String
+        if record.error == ActiveRequestRegistry.cancellationReason { state = "cancelled" }
+        else if record.error != nil { state = "error" }
+        else if record.endedAt != nil { state = "done" }
+        else if record.outputTokens == 0 && record.elapsedSeconds > 2 { state = "thinking/loading" }
+        else { state = "generating" }
+        return RequestSnapshot(
+            id: record.id!, model: record.model, endpoint: record.endpoint,
+            startedAt: record.startedAt, endedAt: record.endedAt,
+            promptTokens: record.promptTokens, outputTokens: record.outputTokens,
+            elapsedSeconds: record.elapsedSeconds,
+            tokensPerSecond: record.endedAt == nil ? Double(liveCount) / 2.0 : record.averageTokensPerSecond,
+            timeToFirstTokenSeconds: record.timeToFirstTokenSeconds,
+            promptTokensPerSecond: record.promptTokensPerSecond,
+            totalDurationSeconds: record.totalDurationNanoseconds.map { Double($0) / 1_000_000_000 },
+            loadDurationSeconds: record.loadDurationNanoseconds.map { Double($0) / 1_000_000_000 },
+            temperature: record.temperature, contextLength: record.contextLength,
+            thinkingEnabled: record.thinkingEnabled, benchmarkLabel: record.benchmarkLabel,
+            resourceSampleCount: record.resourceSampleCount,
+            averageCPUPercent: record.averageCPUPercent,
+            averageGPUPercent: record.averageGPUPercent,
+            averageMemoryUsedBytes: record.averageMemoryUsedBytes,
+            state: state, error: record.error
+        )
     }
 
     func benchmarkSummaries() throws -> [BenchmarkSummary] {
@@ -292,6 +312,21 @@ actor StatsStore {
         try database.read { db in try WebToolRecord.order(Column("id").asc).fetchAll(db) }
     }
 
+    func webToolPage(page requestedPage: Int, pageSize requestedPageSize: Int) throws -> PaginatedResponse<WebToolActivity> {
+        let pageSize = min(max(requestedPageSize, 1), 100)
+        return try database.read { db in
+            let total = try WebToolRecord.fetchCount(db)
+            let totalPages = max(1, (total + pageSize - 1) / pageSize)
+            let page = min(max(requestedPage, 1), totalPages)
+            let records = try WebToolRecord.order(Column("id").desc)
+                .limit(pageSize, offset: (page - 1) * pageSize).fetchAll(db)
+            return PaginatedResponse(
+                items: records.map(webToolActivity), page: page, pageSize: pageSize,
+                totalItems: total, totalPages: totalPages
+            )
+        }
+    }
+
     func webToolSummary(limit: Int) throws -> WebToolSummary {
         try database.read { db in
             let records = try WebToolRecord.order(Column("id").desc).limit(limit).fetchAll(db)
@@ -308,17 +343,19 @@ actor StatsStore {
                 totalRequests: totals["total"], successfulRequests: totals["successful"],
                 failedRequests: totals["failed"], searchRequests: totals["searches"],
                 fetchRequests: totals["fetches"], responseBytes: totals["bytes"],
-                recent: records.map {
-                    WebToolActivity(
-                        id: $0.id!, requestID: $0.requestID, startedAt: $0.startedAt,
-                        tool: $0.tool, source: $0.source, resource: $0.resource, host: $0.host,
-                        durationSeconds: $0.durationSeconds, resultCount: $0.resultCount,
-                        responseBytes: $0.responseBytes, state: $0.error == nil ? "done" : "error",
-                        error: $0.error
-                    )
-                }
+                recent: records.map(webToolActivity)
             )
         }
+    }
+
+    private func webToolActivity(_ record: WebToolRecord) -> WebToolActivity {
+        WebToolActivity(
+            id: record.id!, requestID: record.requestID, startedAt: record.startedAt,
+            tool: record.tool, source: record.source, resource: record.resource, host: record.host,
+            durationSeconds: record.durationSeconds, resultCount: record.resultCount,
+            responseBytes: record.responseBytes, state: record.error == nil ? "done" : "error",
+            error: record.error
+        )
     }
 
     func purge(olderThan cutoff: Date) throws -> Int {
