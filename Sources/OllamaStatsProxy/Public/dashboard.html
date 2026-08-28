@@ -41,6 +41,14 @@
           <label class="checkbox-label"><input id="configFetchEnabled" type="checkbox" /> allow web fetch</label>
           <label class="checkbox-label warning-option"><input id="configFetchPrivateNetworks" type="checkbox" /> allow private/local fetch targets</label>
           <label class="checkbox-label"><input id="configToolsEnabled" type="checkbox" /> enable server-owned tools</label>
+          <div class="settings-wide virtual-models">
+            <h3>Langflow virtual models</h3>
+            <label>Langflow URL<input id="configLangflowURL" type="url" placeholder="http://127.0.0.1:7860" /></label>
+            <label>Langflow API key <span id="langflowKeyState" class="dim"></span><input id="configLangflowAPIKey" type="password" autocomplete="off" placeholder="leave blank to keep current key" /></label>
+            <p class="dim">Expose a Langflow flow as an Ollama model. Langflow's own Ollama components should use port 11434 directly to avoid proxy recursion.</p>
+            <div id="virtualModelRows"></div>
+            <button id="addVirtualModel" class="secondary-button" type="button">add virtual model</button>
+          </div>
           <div class="settings-actions settings-wide">
             <button class="primary-button" type="submit">save settings</button>
             <button id="clearAPIKey" class="secondary-button" type="button">clear API key</button>

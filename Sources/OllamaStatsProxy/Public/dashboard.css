@@ -488,3 +488,9 @@ td.num {
     gap: 6px;
   }
 }
+
+.virtual-models { border-top: 1px solid var(--edge); padding-top: 10px; margin-top: 4px; }
+.virtual-models h3 { margin: 0 0 8px; color: var(--cyan); }
+.virtual-model-row { display: grid; grid-template-columns: minmax(120px,.8fr) minmax(180px,1.4fr) auto auto; gap: 8px; align-items: center; margin: 8px 0; }
+.virtual-model-row input { min-width: 0; }
+@media (max-width: 700px) { .virtual-model-row { grid-template-columns: 1fr; } }

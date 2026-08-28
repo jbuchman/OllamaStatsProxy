@@ -48,7 +48,7 @@ enum OllamaStatsProxyMain {
         let proxy = Proxy(
             upstream: options.upstream, client: client, store: store, metrics: metrics,
             activeRequests: activeRequests,
-            orchestrator: orchestrator
+            orchestrator: orchestrator, configuration: configurationFile
         )
         let router = Router()
 
@@ -293,7 +293,8 @@ private struct Options: Sendable {
             webFetchEnabled: true,
             webFetchAllowPrivateNetworks: false,
             serverToolsEnabled: serverToolsEnabled, serverToolRounds: serverToolRounds,
-            adminPasswordHash: nil
+            adminPasswordHash: nil, langflowURL: "http://127.0.0.1:7860",
+            langflowAPIKey: nil, virtualModels: []
         )
     }
 

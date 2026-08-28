@@ -1,9 +1,12 @@
 {
   "adminPasswordHash": null,
+  "langflowAPIKey": null,
+  "langflowURL": "http://127.0.0.1:7860",
   "serverToolRounds": 4,
   "serverToolsEnabled": true,
-  "webFetchEnabled": true,
+  "virtualModels": [],
   "webFetchAllowPrivateNetworks": false,
+  "webFetchEnabled": true,
   "webFetchMaxBytes": 8388608,
   "webFetchMaxCharacters": 50000,
   "webSearchAPIKey": null,

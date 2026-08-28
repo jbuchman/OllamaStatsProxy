@@ -1,5 +1,11 @@
 import Foundation
 
+struct VirtualModel: Codable, Equatable, Sendable {
+    var name: String
+    var flowID: String
+    var enabled: Bool = true
+}
+
 struct AppConfiguration: Codable, Equatable, Sendable {
     var webSearchProvider: WebTools.SearchProvider?
     var webSearchAPIKey: String?
@@ -11,6 +17,9 @@ struct AppConfiguration: Codable, Equatable, Sendable {
     var serverToolsEnabled: Bool
     var serverToolRounds: Int
     var adminPasswordHash: String?
+    var langflowURL: String?
+    var langflowAPIKey: String?
+    var virtualModels: [VirtualModel]?
 }
 
 struct ConfigurationView: Codable, Sendable {
@@ -25,6 +34,9 @@ struct ConfigurationView: Codable, Sendable {
     var serverToolRounds: Int
     var restartRequired: Bool
     var adminPasswordConfigured: Bool
+    var langflowURL: String?
+    var langflowAPIKeyConfigured: Bool
+    var virtualModels: [VirtualModel]
 }
 
 struct ConfigurationUpdate: Codable, Sendable {
@@ -39,6 +51,10 @@ struct ConfigurationUpdate: Codable, Sendable {
     var serverToolsEnabled: Bool
     var serverToolRounds: Int
     var adminPassword: String?
+    var langflowURL: String?
+    var langflowAPIKey: String?
+    var clearLangflowAPIKey: Bool?
+    var virtualModels: [VirtualModel]?
 }
 
 actor ConfigurationFile {
@@ -76,7 +92,10 @@ actor ConfigurationFile {
             serverToolsEnabled: configuration.serverToolsEnabled,
             serverToolRounds: configuration.serverToolRounds,
             restartRequired: false,
-            adminPasswordConfigured: !(configuration.adminPasswordHash?.isEmpty ?? true)
+            adminPasswordConfigured: !(configuration.adminPasswordHash?.isEmpty ?? true),
+            langflowURL: configuration.langflowURL,
+            langflowAPIKeyConfigured: !(configuration.langflowAPIKey?.isEmpty ?? true),
+            virtualModels: configuration.virtualModels ?? []
         )
     }
 
@@ -96,6 +115,22 @@ actor ConfigurationFile {
         configuration.serverToolRounds = min(max(update.serverToolRounds, 1), 20)
         if let password = update.adminPassword, !password.isEmpty {
             configuration.adminPasswordHash = PasswordHasher.hash(password)
+        }
+        configuration.langflowURL = update.langflowURL?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        if update.clearLangflowAPIKey == true {
+            configuration.langflowAPIKey = nil
+        } else if let key = update.langflowAPIKey, !key.isEmpty {
+            configuration.langflowAPIKey = key
+        }
+        if let models = update.virtualModels {
+            var seen = Set<String>()
+            configuration.virtualModels = models.compactMap { model in
+                let name = model.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                let flowID = model.flowID.trimmingCharacters(in: .whitespacesAndNewlines)
+                let key = name.lowercased()
+                guard !name.isEmpty, !flowID.isEmpty, seen.insert(key).inserted else { return nil }
+                return VirtualModel(name: name, flowID: flowID, enabled: model.enabled)
+            }
         }
         try Self.write(configuration, to: path)
         return view()

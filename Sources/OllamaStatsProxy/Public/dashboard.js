@@ -487,6 +487,9 @@ async function loadConfiguration() {
     $("configFetchPrivateNetworks").checked = config.webFetchAllowPrivateNetworks;
     $("configToolRounds").value = config.serverToolRounds;
     $("configToolsEnabled").checked = config.serverToolsEnabled;
+    $("configLangflowURL").value = config.langflowURL ?? "http://127.0.0.1:7860";
+    $("langflowKeyState").textContent = config.langflowAPIKeyConfigured ? "(configured)" : "(not configured)";
+    renderVirtualModels(config.virtualModels ?? []);
     $("apiKeyState").textContent = config.webSearchAPIKeyConfigured ? "(configured)" : "(not configured)";
     $("configStatus").className = "dim";
     $("configStatus").textContent = config.restartRequired ? "restart required to apply saved settings" : "";
@@ -550,6 +553,10 @@ async function saveConfiguration(event) {
         serverToolsEnabled: $("configToolsEnabled").checked,
         serverToolRounds: Number($("configToolRounds").value),
         adminPassword: $("configAdminPassword").value || null,
+        langflowURL: $("configLangflowURL").value || null,
+        langflowAPIKey: $("configLangflowAPIKey").value || null,
+        clearLangflowAPIKey: false,
+        virtualModels: collectVirtualModels(),
       }),
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -557,6 +564,7 @@ async function saveConfiguration(event) {
     const passwordChanged = $("configAdminPassword").value.length > 0;
     $("configAPIKey").value = "";
     $("configAdminPassword").value = "";
+    $("configLangflowAPIKey").value = "";
     if (passwordChanged) {
       adminAuthenticated = false;
       adminPasswordConfigured = true;
@@ -577,6 +585,33 @@ async function saveConfiguration(event) {
   }
 }
 
+
+function renderVirtualModels(models) {
+  const root = $("virtualModelRows");
+  root.innerHTML = "";
+  for (const model of models) addVirtualModelRow(model);
+}
+
+function addVirtualModelRow(model = { name: "", flowID: "", enabled: true }) {
+  const row = document.createElement("div");
+  row.className = "virtual-model-row";
+  row.innerHTML = `<input class="vm-name" placeholder="model name (e.g. lasagna)" value="${escapeHTML(model.name ?? "")}">` +
+    `<input class="vm-flow" placeholder="Langflow flow ID" value="${escapeHTML(model.flowID ?? "")}">` +
+    `<label class="checkbox-label"><input class="vm-enabled" type="checkbox" ${model.enabled !== false ? "checked" : ""}> enabled</label>` +
+    `<button class="secondary-button vm-delete" type="button">remove</button>`;
+  row.querySelector(".vm-delete").addEventListener("click", () => row.remove());
+  $("virtualModelRows").appendChild(row);
+}
+
+function collectVirtualModels() {
+  return [...document.querySelectorAll(".virtual-model-row")].map(row => ({
+    name: row.querySelector(".vm-name").value.trim(),
+    flowID: row.querySelector(".vm-flow").value.trim(),
+    enabled: row.querySelector(".vm-enabled").checked,
+  })).filter(model => model.name && model.flowID);
+}
+
+$("addVirtualModel").addEventListener("click", () => addVirtualModelRow());
 $("clearAPIKey").addEventListener("click", () => {
   clearConfiguredAPIKey = true;
   $("configAPIKey").value = "";

@@ -14,6 +14,7 @@ struct Proxy: Sendable {
     let metrics: MetricRecorder
     let activeRequests: ActiveRequestRegistry
     let orchestrator: ToolOrchestrator?
+    let configuration: ConfigurationFile
 
     func handle(_ incoming: Request, maxBodyBytes: Int) async throws -> Response {
         let body = try await incoming.body.collect(upTo: maxBodyBytes)
@@ -26,6 +27,51 @@ struct Proxy: Sendable {
         )
         let requestID = tracked ? try await store.begin(metadata: metadata) : nil
         if let requestID { await activeRequests.begin(requestID) }
+
+        // Ollama clients discover available models through /api/tags. Merge enabled
+        // Langflow virtual models into the real Ollama model list so clients can
+        // select them exactly like locally installed models.
+        if incoming.method == .get, path == "/api/tags" {
+            return try await mergedTagsResponse()
+        }
+
+        // Some clients immediately probe /api/show after model selection. A virtual
+        // model has no Ollama manifest, so synthesize the minimal compatible metadata
+        // locally instead of forwarding the request to Ollama (which would 404).
+        if incoming.method == .post, path == "/api/show",
+           let object = try? JSONSerialization.jsonObject(with: Data(body.readableBytesView)) as? [String: Any],
+           let modelName = object["model"] as? String {
+            let langflow = LangflowClient(client: client, configuration: configuration)
+            if let virtual = await langflow.virtualModel(named: modelName) {
+                return try Self.virtualShowResponse(virtual)
+            }
+        }
+
+        if incoming.method == .post, path == "/api/chat",
+           let modelName = metadata.model == "?" ? nil : metadata.model {
+            let langflow = LangflowClient(client: client, configuration: configuration)
+            if let virtual = await langflow.virtualModel(named: modelName) {
+                do {
+                    let task = Task { try await langflow.chat(model: virtual, ollamaBody: Data(body.readableBytesView)) }
+                    if let requestID { await activeRequests.install(requestID) { task.cancel() } }
+                    let data = try await task.value
+                    if let requestID {
+                        var counter = StreamCounter(format: .ndjson)
+                        for event in counter.consume(Array(data)) { metrics.record(.count(requestID, event)) }
+                        for event in counter.finish() { metrics.record(.count(requestID, event)) }
+                        metrics.record(.finish(requestID, nil)); await activeRequests.finish(requestID)
+                    }
+                    var headers = HTTPFields()
+                    headers[.contentType] = ((try? JSONSerialization.jsonObject(with: Data(body.readableBytesView)) as? [String: Any])?["stream"] as? Bool ?? true) ? "application/x-ndjson" : "application/json"
+                    return Response(status: .ok, headers: headers, body: .init(byteBuffer: ByteBuffer(bytes: data)))
+                } catch {
+                    if let requestID { metrics.record(.finish(requestID, String(describing: error))); await activeRequests.finish(requestID) }
+                    let data = try JSONSerialization.data(withJSONObject: ["error": "langflow: \(error)"])
+                    var headers = HTTPFields(); headers[.contentType] = "application/json"
+                    return Response(status: .badGateway, headers: headers, body: .init(byteBuffer: ByteBuffer(bytes: data)))
+                }
+            }
+        }
 
         if incoming.method == .post,
            let orchestrator,
@@ -140,6 +186,99 @@ struct Proxy: Sendable {
             var headers = HTTPFields(); headers[.contentType] = "application/json"
             return Response(status: .badGateway, headers: headers, body: .init(byteBuffer: ByteBuffer(bytes: data)))
         }
+    }
+
+    private func mergedTagsResponse() async throws -> Response {
+        var request = HTTPClientRequest(url: upstream + "/api/tags")
+        request.method = .GET
+        let upstreamResponse = try await client.execute(request, timeout: .seconds(30))
+        let collected = try await upstreamResponse.body.collect(upTo: 64 * 1024 * 1024)
+        let data = Data(collected.readableBytesView)
+
+        guard (200..<300).contains(Int(upstreamResponse.status.code)) else {
+            var headers = HTTPFields()
+            headers[.contentType] = upstreamResponse.headers.first(name: "content-type") ?? "application/json"
+            return Response(
+                status: HTTPResponse.Status(code: Int(upstreamResponse.status.code)),
+                headers: headers,
+                body: .init(byteBuffer: ByteBuffer(bytes: data))
+            )
+        }
+
+        var root = (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        var models = root["models"] as? [[String: Any]] ?? []
+        var names = Set(models.compactMap { item in
+            (item["name"] as? String ?? item["model"] as? String)?.lowercased()
+        })
+
+        let config = await configuration.value()
+        for virtual in config.virtualModels ?? [] where virtual.enabled {
+            let key = virtual.name.lowercased()
+            guard names.insert(key).inserted else { continue }
+            models.append(Self.virtualTag(virtual))
+        }
+        root["models"] = models
+
+        let merged = try JSONSerialization.data(withJSONObject: root)
+        var headers = HTTPFields()
+        headers[.contentType] = "application/json"
+        return Response(status: .ok, headers: headers, body: .init(byteBuffer: ByteBuffer(bytes: merged)))
+    }
+
+    private static func virtualTag(_ model: VirtualModel) -> [String: Any] {
+        [
+            "name": model.name,
+            "model": model.name,
+            "modified_at": "1970-01-01T00:00:00Z",
+            "size": 0,
+            "digest": virtualDigest(flowID: model.flowID),
+            "details": [
+                "format": "langflow",
+                "family": "langflow",
+                "families": ["langflow"],
+                "parameter_size": "virtual",
+                "quantization_level": ""
+            ]
+        ]
+    }
+
+    private static func virtualShowResponse(_ model: VirtualModel) throws -> Response {
+        let object: [String: Any] = [
+            "parameters": "",
+            "template": "",
+            "license": "",
+            "capabilities": ["completion"],
+            "modified_at": "1970-01-01T00:00:00Z",
+            "details": [
+                "parent_model": "",
+                "format": "langflow",
+                "family": "langflow",
+                "families": ["langflow"],
+                "parameter_size": "virtual",
+                "quantization_level": ""
+            ],
+            "model_info": [
+                "ollama_stats_proxy.backend": "langflow",
+                "ollama_stats_proxy.flow_id": model.flowID
+            ]
+        ]
+        let data = try JSONSerialization.data(withJSONObject: object)
+        var headers = HTTPFields()
+        headers[.contentType] = "application/json"
+        return Response(status: .ok, headers: headers, body: .init(byteBuffer: ByteBuffer(bytes: data)))
+    }
+
+    // This is an identifier, not a cryptographic integrity check. Keep it stable and
+    // digest-shaped because a few Ollama clients assume the field is 64 hex chars.
+    private static func virtualDigest(flowID: String) -> String {
+        let bytes = Array(flowID.utf8)
+        var hash: UInt64 = 0xcbf29ce484222325
+        for byte in bytes {
+            hash ^= UInt64(byte)
+            hash &*= 0x100000001b3
+        }
+        let chunk = String(format: "%016llx", hash)
+        return String(repeating: chunk, count: 4)
     }
 
     private func extractMetadata(_ body: Data, endpoint: String, benchmarkLabel: String?) -> RequestMetadata {
