@@ -35,6 +35,22 @@ struct Proxy: Sendable {
             return try await mergedTagsResponse()
         }
 
+        // OpenAI-compatible clients (including 3sparks Chat) discover models through
+        // /v1/models instead of Ollama's native /api/tags. Expose the same virtual
+        // models in that dialect as well.
+        if incoming.method == .get, path == "/v1/models" || path == "/v1/models/" {
+            return try await mergedOpenAIModelsResponse()
+        }
+
+        if incoming.method == .get, path.hasPrefix("/v1/models/") {
+            let encodedName = String(path.dropFirst("/v1/models/".count))
+            let modelName = encodedName.removingPercentEncoding ?? encodedName
+            let langflow = LangflowClient(client: client, configuration: configuration)
+            if let virtual = await langflow.virtualModel(named: modelName) {
+                return try Self.virtualOpenAIModelResponse(virtual)
+            }
+        }
+
         // Some clients immediately probe /api/show after model selection. A virtual
         // model has no Ollama manifest, so synthesize the minimal compatible metadata
         // locally instead of forwarding the request to Ollama (which would 404).
@@ -67,6 +83,38 @@ struct Proxy: Sendable {
                 } catch {
                     if let requestID { metrics.record(.finish(requestID, String(describing: error))); await activeRequests.finish(requestID) }
                     let data = try JSONSerialization.data(withJSONObject: ["error": "langflow: \(error)"])
+                    var headers = HTTPFields(); headers[.contentType] = "application/json"
+                    return Response(status: .badGateway, headers: headers, body: .init(byteBuffer: ByteBuffer(bytes: data)))
+                }
+            }
+        }
+
+        if incoming.method == .post, path == "/v1/chat/completions",
+           let modelName = metadata.model == "?" ? nil : metadata.model {
+            let langflow = LangflowClient(client: client, configuration: configuration)
+            if let virtual = await langflow.virtualModel(named: modelName) {
+                do {
+                    let task = Task { try await langflow.openAIChat(model: virtual, body: Data(body.readableBytesView)) }
+                    if let requestID { await activeRequests.install(requestID) { task.cancel() } }
+                    let data = try await task.value
+                    if let requestID {
+                        metrics.record(.finish(requestID, nil))
+                        await activeRequests.finish(requestID)
+                    }
+                    let requestObject = try? JSONSerialization.jsonObject(with: Data(body.readableBytesView)) as? [String: Any]
+                    let streaming = requestObject?["stream"] as? Bool ?? false
+                    var headers = HTTPFields()
+                    headers[.contentType] = streaming ? "text/event-stream" : "application/json"
+                    if streaming { headers[HTTPField.Name("cache-control")!] = "no-cache" }
+                    return Response(status: .ok, headers: headers, body: .init(byteBuffer: ByteBuffer(bytes: data)))
+                } catch {
+                    if let requestID {
+                        metrics.record(.finish(requestID, String(describing: error)))
+                        await activeRequests.finish(requestID)
+                    }
+                    let data = try JSONSerialization.data(withJSONObject: [
+                        "error": ["message": "langflow: \(error)", "type": "api_error"]
+                    ])
                     var headers = HTTPFields(); headers[.contentType] = "application/json"
                     return Response(status: .badGateway, headers: headers, body: .init(byteBuffer: ByteBuffer(bytes: data)))
                 }
@@ -223,6 +271,55 @@ struct Proxy: Sendable {
         var headers = HTTPFields()
         headers[.contentType] = "application/json"
         return Response(status: .ok, headers: headers, body: .init(byteBuffer: ByteBuffer(bytes: merged)))
+    }
+
+    private func mergedOpenAIModelsResponse() async throws -> Response {
+        var request = HTTPClientRequest(url: upstream + "/v1/models")
+        request.method = .GET
+        let upstreamResponse = try await client.execute(request, timeout: .seconds(30))
+        let collected = try await upstreamResponse.body.collect(upTo: 64 * 1024 * 1024)
+        let data = Data(collected.readableBytesView)
+
+        guard (200..<300).contains(Int(upstreamResponse.status.code)) else {
+            var headers = HTTPFields()
+            headers[.contentType] = upstreamResponse.headers.first(name: "content-type") ?? "application/json"
+            return Response(
+                status: HTTPResponse.Status(code: Int(upstreamResponse.status.code)),
+                headers: headers,
+                body: .init(byteBuffer: ByteBuffer(bytes: data))
+            )
+        }
+
+        var root = (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? ["object": "list"]
+        var models = root["data"] as? [[String: Any]] ?? []
+        var names = Set(models.compactMap { ($0["id"] as? String)?.lowercased() })
+        let config = await configuration.value()
+        for virtual in config.virtualModels ?? [] where virtual.enabled {
+            let key = virtual.name.lowercased()
+            guard names.insert(key).inserted else { continue }
+            models.append(Self.virtualOpenAIModel(virtual))
+        }
+        root["object"] = "list"
+        root["data"] = models
+
+        let merged = try JSONSerialization.data(withJSONObject: root)
+        var headers = HTTPFields(); headers[.contentType] = "application/json"
+        return Response(status: .ok, headers: headers, body: .init(byteBuffer: ByteBuffer(bytes: merged)))
+    }
+
+    private static func virtualOpenAIModel(_ model: VirtualModel) -> [String: Any] {
+        [
+            "id": model.name,
+            "object": "model",
+            "created": 0,
+            "owned_by": "langflow"
+        ]
+    }
+
+    private static func virtualOpenAIModelResponse(_ model: VirtualModel) throws -> Response {
+        let data = try JSONSerialization.data(withJSONObject: virtualOpenAIModel(model))
+        var headers = HTTPFields(); headers[.contentType] = "application/json"
+        return Response(status: .ok, headers: headers, body: .init(byteBuffer: ByteBuffer(bytes: data)))
     }
 
     private static func virtualTag(_ model: VirtualModel) -> [String: Any] {

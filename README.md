@@ -4,6 +4,19 @@ A transparent, low-overhead Ollama proxy and benchmarking dashboard written in S
 
 It streams Ollama responses to clients before asynchronously accounting for them, persists performance history in SQLite, and exposes an `otop`-inspired responsive dashboard and machine-readable APIs.
 
+## Langflow virtual models and Lasagna memory
+
+A virtual model exposes a Langflow chat workflow through the proxy's Ollama and OpenAI-compatible model APIs. Configure the Langflow URL/API key in the admin UI, then add a virtual model name and its **chat flow ID**.
+
+To wrap a virtual model with Lasagna long-term memory, also configure the global **Lasagna memory flow ID** and set that model's **Memory Scope** to the stable Chroma scope you want it to use. The proxy then performs:
+
+```text
+client -> Lasagna recall -> Langflow chat flow -> Lasagna commit -> client
+```
+
+For an existing Lasagna installation, obtain the exact scope from the Chroma database; it resembles `lasagna:v2:<owner-id>:<persona>:character%3A<character>`. Langflow components that call Ollama should point directly at port `11434`, not back through the proxy on `11435`, to avoid recursion.
+
+
 ## Highlights
 
 - Native Ollama NDJSON and OpenAI-compatible SSE/JSON proxying.
