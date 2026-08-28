@@ -7,7 +7,7 @@ import Darwin
 
 @main
 enum OllamaStatsProxyMain {
-    static let version = "0.1.1"
+    static let version = "0.2.0"
 
     static func main() async throws {
         let options = try Options(arguments: Array(CommandLine.arguments.dropFirst()))
@@ -37,6 +37,9 @@ enum OllamaStatsProxyMain {
         let webToolMonitor = WebToolMonitor(store: store)
         let webTools = WebTools(
             client: webClient, configuration: configurationFile, monitor: webToolMonitor
+        )
+        let magazineDigests = MagazineDigestService(
+            client: client, upstream: options.upstream, webTools: webTools
         )
         // URL fetching does not require a search provider. Keep server-owned tool
         // orchestration enabled so models can use fetch_url on its own; the
@@ -83,6 +86,38 @@ enum OllamaStatsProxyMain {
         }
 
         router.get("/monitor") { _, _ in Dashboard.response() }
+        router.get("/digest") { _, _ in
+            Dashboard.resourceResponse(named: "digest.html") ?? Response(status: .notFound)
+        }
+        router.post("/digests/pdf") { request, _ in
+            do {
+                let body = try await request.body.collect(upTo: 256 * 1024)
+                let digestRequest = try JSONDecoder().decode(
+                    MagazineDigestRequest.self, from: Data(body.readableBytesView)
+                )
+                let pdf = try await magazineDigests.create(digestRequest)
+                var headers = HTTPFields()
+                headers[.contentType] = "application/pdf"
+                headers[.contentDisposition] = "attachment; filename=morning-digest.pdf"
+                headers[.cacheControl] = "no-store"
+                return Response(
+                    status: .ok, headers: headers,
+                    body: .init(byteBuffer: ByteBuffer(bytes: pdf))
+                )
+            } catch let error as DecodingError {
+                return try APIResponses.json(
+                    ["error": "Invalid digest request: \(error)"], status: .badRequest
+                )
+            } catch let error as MagazineDigestError {
+                return try APIResponses.json(["error": error.description], status: .badRequest)
+            } catch let error as WebToolError {
+                return try APIResponses.json(["error": error.description], status: .badGateway)
+            } catch {
+                return try APIResponses.json(
+                    ["error": "Digest generation failed: \(error)"], status: .internalServerError
+                )
+            }
+        }
         router.get("/tools/web/search") { request, _ in
             guard let query = request.uri.queryParameters.get("q"), !query.isEmpty else {
                 return try APIResponses.json(["error": "missing q query parameter"])

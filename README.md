@@ -32,6 +32,7 @@ For an existing Lasagna installation, obtain the exact scope from the Chroma dat
 - Persistent SQLite history with JSON/CSV exports and retention controls.
 - Responsive desktop, iPad, and phone dashboard.
 - Live web-tool resource activity: LLM/direct caller, search queries, fetched URLs, latency, result counts, received bytes, and failures (metadata only; page contents are not retained).
+- A local magazine studio that turns live research into a designed, source-linked PDF morning digest.
 
 ![Desktop dashboard preview](docs/dashboard-desktop.svg)
 
@@ -73,6 +74,8 @@ Override inputs with `BENCHMARK_LABEL`, `BENCHMARK_PROMPT`, and `OLLAMA_PROXY_UR
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /monitor` | Responsive dashboard |
+| `GET /digest` | Magazine digest studio |
+| `POST /digests/pdf` | Research a query and return a generated PDF edition |
 | `GET /stats` | Live system, model, session, and recent-request JSON |
 | `GET /healthz` | Ollama-aware health check |
 | `GET /version` | Proxy name and semantic version |
@@ -171,6 +174,20 @@ curl -G 'http://127.0.0.1:11435/tools/web/fetch' \
 `fetch` accepts public HTTP/HTTPS URLs, converts common HTML structure and links to Markdown, and truncates returned text (50,000 characters by default). Private-network access is blocked unless explicitly enabled in settings. Adjust limits with `--web-fetch-max-mb` and `--web-fetch-max-chars`.
 
 These endpoints are the building blocks for agent/tool integration: a chat client or MCP/tool adapter can expose them to a tool-capable Ollama model as `search_web` and `fetch_url`. The proxy deliberately does not inject tools into every `/api/chat` or `/v1/chat/completions` request, because doing so would interfere with clients such as Xcode that already manage their own tool schemas and tool-call loop.
+
+## Magazine digests
+
+Open `/digest`, choose an installed Ollama model, and enter a news topic. The proxy searches the configured provider, reads public result pages, downloads publisher preview images when available, asks Ollama for a source-grounded editorial structure, and returns a magazine-style PDF. Page text and images are used only while the request is running and are not added to the history database.
+
+Digest generation requires a configured web search provider and URL fetching. Models with reliable Ollama structured-output support provide the best editorial results; the digest falls back to attributed source-led copy when needed. A direct request looks like:
+
+```sh
+curl -o morning-digest.pdf -X POST 'http://127.0.0.1:11435/digests/pdf' \
+  -H 'content-type: application/json' \
+  -d '{"query":"the most important technology news today","model":"llama3.2","storyCount":5}'
+```
+
+Langflow is not required. It is best used as an optional editorial workflow for custom ranking, house style, or specialist review; source acquisition, network safety, and PDF rendering remain in the proxy.
 
 ## Generic server-owned tool orchestration
 

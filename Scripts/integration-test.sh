@@ -8,7 +8,7 @@ trap cleanup EXIT
 for _ in {1..30}; do curl -fsS http://127.0.0.1:11437/stats >/dev/null && break; sleep 1; done
 curl -fsS http://127.0.0.1:11437/monitor | grep -q 'ollama monitor'
 curl -fsS http://127.0.0.1:11437/public/dashboard.js | grep -q 'loadConfiguration'
-curl -fsS http://127.0.0.1:11437/version | grep -q '0.1.1'
+curl -fsS http://127.0.0.1:11437/version | grep -q '0.2.0'
 curl -fsS http://127.0.0.1:11437/healthz | grep -q 'ok'
 curl -fsS http://127.0.0.1:11437/api/chat -H 'Content-Type: application/json' -d '{"model":"mock","messages":[{"role":"user","content":"Given url(#paint14_radial_13003_106798), append _red using JavaScript"}],"stream":false}' | grep -q 'value.replace'
 curl -fsS http://127.0.0.1:11437/api/chat -H 'Content-Type: application/json' -d '{"model":"mock","messages":[{"role":"user","content":"Is there a recent Linux distro with up to date pre configured GNUstep and Window Maker? Feel free to use the internet"}],"stream":false}' | grep -q 'Live internet access'

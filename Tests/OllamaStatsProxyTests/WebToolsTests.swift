@@ -20,6 +20,12 @@ import Testing
     #expect(!markdown.contains("ignore me"))
 }
 
+@Test func openGraphImageIsResolvedAgainstArticleURL() {
+    let html = #"<html><head><meta property="og:image" content="/media/lead.jpg"></head></html>"#
+    let image = WebTools.extractImageURL(html, baseURL: URL(string: "https://news.example/story/1")!)
+    #expect(image == "https://news.example/media/lead.jpg")
+}
+
 @Test func configurationPersistsAndRedactsAPIKey() async throws {
     let path = FileManager.default.temporaryDirectory
         .appendingPathComponent("ollama-config-\(UUID().uuidString).json").path

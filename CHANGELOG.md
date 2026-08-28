@@ -4,8 +4,17 @@ All notable changes will be documented here.
 
 ## Unreleased
 
+## 0.2.0 - 2026-08-28
+
 - Strengthened web-research routing for recent/latest questions and natural-language permission to use the internet.
 - Added current-date and live-internet capability grounding for temporal follow-up questions.
+- Added Langflow virtual models to the native Ollama and OpenAI-compatible model APIs.
+- Added configurable Langflow workflows, API authentication, stable sessions, and optional Lasagna recall/commit memory integration.
+- Added virtual-model discovery and metadata support for Ollama-compatible clients.
+- Added a browser-based magazine studio that turns live web research into downloadable PDF editions.
+- Added article-page discovery, publisher preview images, grounded long-form editorial passes, source attribution, and safe source-led fallback behavior.
+- Added magazine-style covers, contents pages, two-column features, unlimited continuation pages, sequential page numbering, and reporting notes.
+- Added tests for structured editorial decoding, article discovery and cleanup, source-led fallback, image metadata, PDF rendering, and long-article pagination.
 
 ## 0.1.1 - 2026-08-21
 

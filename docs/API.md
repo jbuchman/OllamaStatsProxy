@@ -44,6 +44,21 @@ The unpaginated `GET /web-tools` endpoint remains available for exports and comp
 
 `GET /export.json` returns all stored request records. `GET /export.csv` returns equivalent spreadsheet-friendly data.
 
+## Magazine digest
+
+`POST /digests/pdf` accepts a JSON body with `query`, `model`, optional `title`, and optional `storyCount` (clamped to 2-8). It searches and fetches current sources, uses the selected local Ollama model to synthesize a structured issue, and returns `application/pdf` as `morning-digest.pdf`.
+
+```json
+{
+  "query": "the most important climate and energy stories today",
+  "model": "llama3.2",
+  "title": "The Morning Ledger",
+  "storyCount": 5
+}
+```
+
+Source article text and downloaded images are transient. Normal web-tool metadata is still recorded with caller `magazine`. `GET /digest` serves the browser interface.
+
 ## Cancelling active requests
 
 Authenticated `POST /requests/:id/cancel` cancels an active upstream generation or server-owned tool orchestration task. Successful requests return `202` with `{"requestID":123,"status":"cancelling"}`; a repeated cancellation returns `409`, and a finished or unknown request returns `404`. The completion is retained with state `cancelled` and error `cancelled by administrator`.

@@ -21,6 +21,11 @@ struct WebFetchResponse: Codable, Sendable {
     var truncated: Bool
 }
 
+struct WebFetchedPage: Sendable {
+    var response: WebFetchResponse
+    var imageURL: String?
+}
+
 enum WebToolError: Error, CustomStringConvertible {
     case notConfigured
     case disabled
@@ -69,6 +74,10 @@ struct WebTools: Sendable {
     }
 
     func fetch(_ rawURL: String, source: String = "endpoint", requestID: Int64? = nil) async throws -> WebFetchResponse {
+        try await fetchPage(rawURL, source: source, requestID: requestID).response
+    }
+
+    func fetchPage(_ rawURL: String, source: String = "endpoint", requestID: Int64? = nil) async throws -> WebFetchedPage {
         let startedAt = Date()
         do {
             let configuration = await configuration.value()
@@ -109,9 +118,48 @@ struct WebTools: Sendable {
                 truncated: cleaned.count > configuration.webFetchMaxCharacters
             )
             await monitor.record(requestID: requestID, startedAt: startedAt, tool: "fetch", source: source, resource: rawURL, responseBytes: data.count)
-            return result
+            return WebFetchedPage(
+                response: result,
+                imageURL: contentType.contains("html") ? Self.extractImageURL(bodySource, baseURL: url) : nil
+            )
         } catch {
             await monitor.record(requestID: requestID, startedAt: startedAt, tool: "fetch", source: source, resource: rawURL, error: error)
+            throw error
+        }
+    }
+
+    func downloadImage(_ rawURL: String, source: String = "endpoint", requestID: Int64? = nil) async throws -> Data {
+        let startedAt = Date()
+        do {
+            let configuration = await configuration.value()
+            guard configuration.webFetchEnabled != false else { throw WebToolError.disabled }
+            guard var url = URL(string: rawURL) else { throw WebToolError.badURL }
+            for redirectCount in 0...5 {
+                try await URLSafety.validate(url, allowPrivateNetworks: configuration.webFetchAllowPrivateNetworks == true)
+                var request = HTTPClientRequest(url: url.absoluteString)
+                request.method = .GET
+                request.headers.add(name: "user-agent", value: "OllamaStatsProxy/1.0")
+                request.headers.add(name: "accept", value: "image/avif,image/webp,image/png,image/jpeg,*/*;q=0.2")
+                let response = try await client.execute(request, timeout: .seconds(20))
+                let status = Int(response.status.code)
+                if (300..<400).contains(status), let location = response.headers.first(name: "location") {
+                    guard redirectCount < 5,
+                          let redirected = URL(string: location, relativeTo: url)?.absoluteURL
+                    else { throw URLSafetyError.tooManyRedirects }
+                    url = redirected
+                    continue
+                }
+                guard (200..<300).contains(status) else { throw WebToolError.badResponse(status) }
+                let type = response.headers.first(name: "content-type")?.lowercased() ?? ""
+                guard type.hasPrefix("image/") else { throw WebToolError.malformedResponse }
+                let body = try await response.body.collect(upTo: min(configuration.webFetchMaxBytes, 12 * 1024 * 1024))
+                let data = Data(body.readableBytesView)
+                await monitor.record(requestID: requestID, startedAt: startedAt, tool: "image", source: source, resource: rawURL, responseBytes: data.count)
+                return data
+            }
+            throw URLSafetyError.tooManyRedirects
+        } catch {
+            await monitor.record(requestID: requestID, startedAt: startedAt, tool: "image", source: source, resource: rawURL, error: error)
             throw error
         }
     }
@@ -173,6 +221,24 @@ struct WebTools: Sendable {
         return plainText(String(html[range]))
             .replacingOccurrences(of: "title", with: "", options: .caseInsensitive)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func extractImageURL(_ html: String, baseURL: URL) -> String? {
+        let patterns = [
+            #"(?is)<meta\b[^>]*\bproperty\s*=\s*[\"']og:image(?::secure_url)?[\"'][^>]*\bcontent\s*=\s*[\"']([^\"']+)[\"'][^>]*>"#,
+            #"(?is)<meta\b[^>]*\bcontent\s*=\s*[\"']([^\"']+)[\"'][^>]*\bproperty\s*=\s*[\"']og:image(?::secure_url)?[\"'][^>]*>"#,
+            #"(?is)<meta\b[^>]*\bname\s*=\s*[\"']twitter:image(?::src)?[\"'][^>]*\bcontent\s*=\s*[\"']([^\"']+)[\"'][^>]*>"#
+        ]
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern),
+                  let match = regex.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
+                  let range = Range(match.range(at: 1), in: html) else { continue }
+            let candidate = decodeEntities(String(html[range]))
+            guard let resolved = URL(string: candidate, relativeTo: baseURL)?.absoluteURL,
+                  let scheme = resolved.scheme?.lowercased(), ["http", "https"].contains(scheme) else { continue }
+            return resolved.absoluteString
+        }
+        return nil
     }
 
     static func markdownText(_ html: String, baseURL: URL) -> String {
